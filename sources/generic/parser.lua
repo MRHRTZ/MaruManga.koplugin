@@ -1,0 +1,98 @@
+-- Profile-based HTML extraction. No scripts or remote code are evaluated.
+local Parser={}
+local function first(root,selector)
+    if type(selector)~="string" or selector=="" then return nil end
+    local ok,nodes=pcall(root.select,root,selector)
+    if not ok then return nil end
+    return nodes and nodes[1]
+end
+local function all(root,selector)
+    if type(selector)~="string" or selector=="" then return {} end
+    local ok,nodes=pcall(root.select,root,selector)
+    return ok and nodes or {}
+end
+local function first_profile(root,selector,selectors)
+    if selector then return first(root,selector) end
+    for _,candidate in ipairs(selectors or {}) do local node=first(root,candidate); if node then return node end end
+end
+local function all_profile(root,selector,selectors)
+    if selector then return all(root,selector) end
+    for _,candidate in ipairs(selectors or {}) do local nodes=all(root,candidate); if #nodes>0 then return nodes end end
+    return {}
+end
+local function text(node,clean)
+    if not node then return "" end
+    return (clean(node:getcontent() or ""):gsub("^%s+",""):gsub("%s+$",""))
+end
+local function absolute(resolve,base,ref)
+    if type(ref)~="string" or ref=="" then return nil end
+    local ok,result=pcall(resolve,base,ref)
+    if not ok or type(result)~="string" or #result>8192 or result:find("[%c%s]") or not result:match("^https://") then return nil end
+    return result
+end
+function Parser.new(html,resolve,clean,profile,digest)
+    assert(html and resolve and clean and type(profile)=="table")
+    digest=digest or function(value) return value end
+    local self={profile=profile}
+    local function root(body)
+        if type(body)~="string" or #body>2097152 then return nil,"Invalid HTML response" end
+        local ok,node=pcall(html.parse,body,5000)
+        if not ok or not node then return nil,"Invalid HTML response" end
+        return node
+    end
+    function self:list(body,base)
+        local doc,err=root(body); if not doc then return nil,err end
+        local items={}
+        for _,node in ipairs(all_profile(doc,profile.list_selector,profile.list_selectors)) do
+            local link=first_profile(node,profile.list_link_selector,profile.list_link_selectors) or (not profile.list_link_selector and not profile.list_link_selectors and node or nil)
+            local href=link and absolute(resolve,base,link.attributes[profile.list_link_attribute or "href"])
+            local title=profile.list_title_selector and text(first(node,profile.list_title_selector),clean) or text(link,clean)
+            if title=="" then title=text(link,clean) end
+            if title=="" and link then local img=first(link,"img"); title=img and img.attributes.alt or "" end
+            if href and title~="" then items[#items+1]={id=digest(href),title=title,url=href,source_id=profile.id} end
+        end
+        local nextnode=first_profile(doc,profile.next_selector,profile.next_selectors)
+        local nexturl=nextnode and absolute(resolve,base,nextnode.attributes[profile.next_attribute or "href"])
+        return {items=items,next_url=nexturl,has_next=nexturl~=nil}
+    end
+    function self:details(body,base,manga)
+        local doc,err=root(body); if not doc then return nil,err end
+        local item={id=manga.id,url=manga.url,source_id=profile.id,title=text(first(doc,profile.title_selector),clean),description=text(first(doc,profile.description_selector),clean),author=text(first(doc,profile.author_selector),clean),artist=text(first(doc,profile.artist_selector),clean),status=text(first(doc,profile.status_selector),clean),genres={}}
+        if item.title=="" then item.title=manga.title end
+        local cover=first(doc,profile.cover_selector)
+        if cover then item.cover_url=absolute(resolve,base,cover.attributes[profile.cover_attribute or "src"]) end
+        for _,node in ipairs(all(doc,profile.genre_selector)) do local value=text(node,clean); if value~="" then item.genres[#item.genres+1]=value end end
+        return item
+    end
+    function self:chapters(body,base,manga)
+        local doc,err=root(body); if not doc then return nil,err end
+        local items={}
+        for _,node in ipairs(all(doc,profile.chapter_selector)) do
+            local link=profile.chapter_link_selector and first(node,profile.chapter_link_selector) or node
+            local href=link and absolute(resolve,base,link.attributes[profile.chapter_attribute or "href"])
+            local name=text(link,clean)
+            if href and name~="" then
+                local number=name:lower():match("chapter%s*(%d+%.?%d*)") or name:lower():match("ch%.?%s*(%d+%.?%d*)")
+                items[#items+1]={id=digest(href),manga_id=manga.id,name=name,chapter_number=tonumber(number),url=href}
+            end
+        end
+        return items
+    end
+    function self:pages(body,base)
+        local doc,err=root(body); if not doc then return nil,err end
+        local items={}
+        for _,node in ipairs(all(doc,profile.page_selector)) do
+            local image
+            local attributes=profile.page_attribute and {profile.page_attribute} or profile.page_attributes or {"src"}
+            for _,name in ipairs(attributes) do
+                local raw=node.attributes[name]
+                if type(raw)=="string" and raw:match("%S") then image=absolute(resolve,base,raw:match("^%s*(.-)%s*$")); if image then break end end
+            end
+            if image then items[#items+1]={index=#items+1,image_url=image,headers={},referer=base} end
+        end
+        if #items==0 then return nil,"Chapter has no images" end
+        return items
+    end
+    return self
+end
+return Parser

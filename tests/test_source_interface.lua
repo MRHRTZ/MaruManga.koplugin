@@ -1,0 +1,8 @@
+local Interface = dofile("sources/source_interface.lua")
+local Source = dofile("sources/mangadex/source.lua")
+local parser = dofile("sources/mangadex/parser.lua")
+assert(Interface.validate(Source.new({}, parser)))
+local ok, err = Interface.validate({getId=function() return "x" end})
+assert(not ok and err:find("Missing source method", 1, true))
+assert(not Interface.validate(nil))
+print("Source interface tests passed")

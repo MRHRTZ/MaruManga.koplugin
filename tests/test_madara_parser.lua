@@ -1,0 +1,11 @@
+local generic=dofile("sources/generic/parser.lua")
+local madara=dofile("sources/madara/source.lua")
+local html=require("htmlparser"); local url=require("socket.url")
+local profile=madara.profile({id="fixture",name="Fixture",base_url="https://example.org"})
+local p=generic.new(html,url.absolute,function(s) return (s:gsub("<[^>]*>","")) end,profile)
+local list=assert(p:list('<div class="page-item-detail"><div class="item-thumb"><a href="/manga/a">Cover</a></div><div class="post-title"><a>Series</a></div></div>',"https://example.org/")); assert(list.items[1].title=="Series")
+local chapters=assert(p:chapters('<ul><li class="wp-manga-chapter"><a href="/chapter/1">Chapter 1</a></li></ul>',"https://example.org/",list.items[1])); assert(#chapters==1)
+local pages=assert(p:pages('<div class="reading-content"><img data-src="/1.jpg"/></div>',chapters[1].url)); assert(#pages==1 and pages[1].referer==chapters[1].url)
+print("Madara profile tests passed")
+
+local lazy=assert(p:pages('<div class="reading-content"><img data-lazy-src=" /lazy.jpg "/></div>',"https://example.org/chapter")); assert(lazy[1].image_url=="https://example.org/lazy.jpg")

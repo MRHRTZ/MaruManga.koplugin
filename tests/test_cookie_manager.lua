@@ -1,0 +1,10 @@
+local Jar=dofile("network/cookie_manager.lua")
+local j=Jar.new(); j:store("https://example.org/a","session=abc; Path=/a; Secure; HttpOnly")
+assert(j:header("https://example.org/a/b")=="session=abc")
+assert(not j:header("https://example.org/ab") and not j:header("https://other.example/a"))
+j:store("https://example.org/a","wrong=x; Domain=evil.org; Path=/"); assert(not j:header("https://example.org/"))
+j:store("https://example.org/a","session=gone; Path=/a; Max-Age=0"); assert(not j:header("https://example.org/a"))
+j:store("https://example.org/a","bad=x\r\nInjected: y"); assert(not j:header("https://example.org/a"))
+print("Cookie isolation tests passed")
+
+j:store("https://example.org/dir/page","local=one"); assert(j:header("https://example.org/dir/other")=="local=one"); assert(not j:header("https://example.org/else"))

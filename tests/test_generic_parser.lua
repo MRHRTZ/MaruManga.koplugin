@@ -1,0 +1,11 @@
+local parser=dofile("sources/generic/parser.lua")
+local html=require("htmlparser"); local url=require("socket.url")
+local clean=function(s) return (s:gsub("<[^>]*>","")) end
+local p=parser.new(html,url.absolute,clean,{id="fixture",list_selector=".book",list_link_selector="a",next_selector="a.next",title_selector="h1",description_selector=".desc",chapter_selector="a.chapter",page_selector="img.page",page_attribute="data-src"})
+local results=assert(p:list('<div class="book"><a href="/book/a">Title</a></div><a class="next" href="?p=2">Next</a>',"https://example.org/list"))
+assert(results.items[1].url=="https://example.org/book/a" and results.has_next)
+local details=assert(p:details('<h1>Title</h1><p class="desc">Description</p>',"https://example.org/book/a",results.items[1])); assert(details.title=="Title" and details.description=="Description")
+local chapters=assert(p:chapters('<a class="chapter" href="/chapter/1">Chapter 1</a>',details.url,details)); assert(chapters[1].manga_id==details.id)
+local pages=assert(p:pages('<img class="page" data-src="/img/1.jpg"/><img class="page" data-src="/img/2.jpg"/>',chapters[1].url)); assert(#pages==2 and pages[2].index==2)
+assert(not p:pages('<p>nothing</p>',chapters[1].url))
+print("Generic HTML profile tests passed")
