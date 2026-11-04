@@ -8,12 +8,6 @@
 
 MaruManga Downloader saves manga chapters as one CBZ archive per manga, manages a local library, and checks bookmarked titles for new chapters. It is a native Lua KOReader plugin. Chapter reading uses KOReader's document reader and downloaded files, so reading is available offline.
 
-## Main menu
-
-<p align="center">
-  <img src="images/maru-manga-mainmenu.png" alt="MaruManga Downloader main menu in KOReader" width="480">
-</p>
-
 ## Install
 
 1. Download the ZIP from [Latest release](https://github.com/MRHRTZ/MaruManga.koplugin/releases/latest).
@@ -23,7 +17,7 @@ MaruManga Downloader saves manga chapters as one CBZ archive per manga, manages 
 
 For Android, the plugin directory is normally under KOReader's application data. See [Development documentation](docs/README.md) for locating it and installing with ADB.
 
-## Use
+## How to use
 
 1. Open **Repositories** and refresh the default repository catalog. Install and enable **Komiku** if it is not already available. The default catalog is `https://raw.githubusercontent.com/MRHRTZ/maru-manga-repository/master/metadata.json`.
 2. Open **Discover**, choose Search, Popular, or Latest updates, and open a manga card.
@@ -31,6 +25,12 @@ For Android, the plugin directory is normally under KOReader's application data.
 4. Choose **Download All Chapters** to queue all missing chapters, or open **Chapters** and download selected chapters. Chapters merge into a single `manga.cbz` for that title. Downloads can be monitored, refreshed, paused, continued, or cancelled from **Downloads**.
 5. Open **Library > Browse library**, select a title, then choose **Read Manga** to open its local CBZ in KOReader. The plugin blocks opening while that archive is being modified.
 6. Use **Library > Check Updates** to compare bookmarked titles with their source. Already downloaded chapters are excluded from the new chapter count and can be queued for download.
+
+| Main menu | Popular manga |
+| --- | --- |
+| <img src="images/main-menu.png" alt="MaruManga Downloader main menu" width="360"> | <img src="images/popular.png" alt="Popular manga in a cover grid" width="360"> |
+| Library | Downloads |
+| <img src="images/library.png" alt="MaruManga Downloader library" width="360"> | <img src="images/downloads.png" alt="MaruManga Downloader download queue" width="360"> |
 
 **Settings > Network and storage** controls the download directory (default `./marumanga` under KOReader's data directory), concurrent downloads (default 2), timeout, retries, DNS, and optional SSL certificate validation override. Keep SSL verification enabled unless a trusted network requires otherwise.
 
