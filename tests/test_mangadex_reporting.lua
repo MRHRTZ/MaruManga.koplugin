@@ -7,10 +7,10 @@ local calls=0
 local request={fetch=function(url,deps)
     calls=calls+1
     if calls==1 then assert(deps.write("data")); return 200,{size=4,prefix="data",content_type="image/jpeg",cached=true} end
-    assert(url=="https://api.mangadex.network/report" and deps.method=="POST" and deps.headers["Content-Type"]=="application/json")
+    assert(deps.cafile=="/bundle" and url=="https://api.mangadex.network/report" and deps.method=="POST" and deps.headers["Content-Type"]=="application/json")
     return 200,"ok"
 end}
 local result
-Downloader.new(trapper,request,function() return {socket={gettime=function() return 1 end}} end,files)({image_url="https://node.mangadex.network:1234/token/data/ab/1.jpg",report_mangadex=true},"tmp",100,function(meta) result=meta end)
+Downloader.new(trapper,request,function() return {cafile="/bundle",socket={gettime=function() return 1 end}} end,files)({image_url="https://node.mangadex.network:1234/token/data/ab/1.jpg",report_mangadex=true},"tmp",100,function(meta) result=meta end)
 assert(result and calls==2 and encoded.success and encoded.cached and encoded.bytes==4 and encoded.duration==0)
 print("MangaDex network reporting tests passed")

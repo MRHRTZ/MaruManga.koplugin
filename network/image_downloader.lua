@@ -25,7 +25,7 @@ function Downloader.new(trapper, request, dependencies, files, runner, deadline)
                         cached=type(result)=="table" and result.cached or false,
                     })
                     if encoded_ok then
-                        local report={socket=deps.socket,ssl=deps.ssl,http=deps.http,capath=deps.capath,timeout=5,
+                        local report={socket=deps.socket,ssl=deps.ssl,http=deps.http,cafile=deps.cafile,capath=deps.capath,timeout=5,
                             method="POST",body=encoded,allowed_hosts={["api.mangadex.network"]=true},
                             headers={["Content-Type"]="application/json"},max_bytes=16384}
                         pcall(request.fetch,"https://api.mangadex.network/report",report)

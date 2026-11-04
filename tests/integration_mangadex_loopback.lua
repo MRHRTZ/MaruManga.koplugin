@@ -38,13 +38,14 @@ if os.getenv("TEST_FULL")=="1" then
         publishNoReplace=function(a,b) if ffi.C.link(a,b)~=0 then return false end; os.remove(a); return true end}
     local trapper={wrap=function(_,f) f() end,dismissableRunInSubprocess=function(_,f) return true,f() end}
     local function dependencies() return {socket=forwarded,ssl=ssl,http=require("socket.http"),capath=assert(os.getenv("TEST_CA_DIR"))} end
-    local downloader=Downloader.new(trapper,Secure,dependencies)
+    local runner={run=function(task,_,callback) local ok,code,meta,err=pcall(task); callback(ok,code,meta,err); return {cancel=function() end} end}
+    local downloader=Downloader.new(trapper,Secure,dependencies,nil,runner)
     local result,opened
     reader.open({fs=fs,archiver=archiver,stager=stager,build=builder.build,validate=validator.validate,download=downloader,
         removeDir=function() end,library={linkArchive=function() return true end},source={getPageList=function(_,_,cb) cb(pages) end},
         openDocument=function(file) opened=file end},detail,chapters[1],function(ok,err) assert(ok,err); result=ok end)
     assert(result and opened==prefix .. ".cbz")
-    local archive=archiver.Reader:new(); assert(archive:open(opened)); local entry=archive:next(); assert(entry and entry.path=="000001.jpg"); archive:close()
+    local archive=archiver.Reader:new(); assert(archive:open(opened),"Generated CBZ could not be reopened"); local entry=archive:next(); assert(entry and entry.path:match("^.+/000001%.jpg$"),"Generated CBZ has no titled first JPEG page"); archive:close()
     os.remove(opened); os.execute("rmdir " .. prefix)
     print("MangaDex fixture through HTTPS download and real archive passed")
 else print("MangaDex browsing over real loopback HTTPS passed") end

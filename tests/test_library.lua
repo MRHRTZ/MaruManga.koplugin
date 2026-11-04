@@ -7,6 +7,8 @@ local m={id="1",source_id="mangadex",title="Z"}; local c={id="a",name="1"}
 assert(s:record(m,c,2,100)); assert(s:record(m,c,4,101)); assert(#s.data.history==1 and s.data.history[1].page==4)
 assert(not s:record(m,c,0)); assert(s:remove("mangadex","1")); assert(#s:list()==1)
 assert(not Store.open({readSetting=function() return {version=2} end}))
+local legacy=assert(Store.open({readSetting=function() return {version=1,manga={},history={},archives={},chapters={}} end}))
+assert(type(legacy.data.chapter_sync)=="table")
 print("Library persistence tests passed")
 
 assert(s:linkArchive("/tmp/a.cbz",m,c)); assert(s:recordArchivePage("/tmp/a.cbz",7)); assert(s.data.history[1].page==7)
@@ -21,9 +23,29 @@ assert(#s:list("a")==1 and s:list("a")[1].title=="A")
 assert(s:add({id="1",source_id="mangadex",title="Z"})); assert(s:list(nil,"recent")[1].title=="Z")
 
 local archived="/old/manga/mangadex/1/chapters/a.cbz"; assert(s:linkArchive(archived,m,c,3)); assert(s:archiveFor("mangadex","1","a")==archived); assert(not s:archiveFor("../bad","1","a"))
+local moved="/new/manga/mangadex/1/chapters/a.cbz"; assert(s:linkArchive(moved,m,c,3)); assert(not s.data.archives[archived] and s:archiveFor("mangadex","1","a")==moved)
 
 assert(s:add({id="3",source_id="s",title="M",url="https://example.org/m",author="Author",genres={"Action"}})); assert(s.data.manga["s:3"].url=="https://example.org/m" and s.data.manga["s:3"].genres[1]=="Action")
 
 assert(s:cacheChapters(m,{{id="chapter2",manga_id="1",name="Chapter 2",chapter_number=2}})); assert(s:chapterStatus("mangadex","chapter2").metadata.chapter_number==2)
+assert(not s.data.chapter_sync["mangadex:1"])
+assert(s:markChaptersSynced(m,2,123,1,2)); assert(s.data.chapter_sync["mangadex:1"].count==2 and s.data.chapter_sync["mangadex:1"].missing_count==1 and s.data.chapter_sync["mangadex:1"].latest_number==2 and s.data.chapter_sync["mangadex:1"].checked_at==123)
+assert(not s:markChaptersSynced(m,2,123,3))
+assert(not s:markChaptersSynced(m,2,123,1,0/0))
+assert(not s:markChaptersSynced(m,-1)); assert(not Store.open({readSetting=function() return {version=1,manga={},history={},archives={},chapters={},chapter_sync="broken"} end}))
 
 local unread=s:list(nil,nil,"unread"); assert(#unread==1 and unread[1].id=="1"); local filtered=s:list(nil,nil,"source","s"); assert(#filtered==1 and filtered[1].source_id=="s")
+
+local merge_manga={id="99",source_id="mangadex",title="Merge"}
+assert(s:add(merge_manga))
+local shared="/new/manga/mangadex/99/manga.cbz"
+local old_chapter={id="legacy",manga_id="99",name="Chapter 1",chapter_number=1}
+local new_chapter={id="next",manga_id="99",name="Chapter 2",chapter_number=2}
+local new_digest=string.rep("a",64)
+local old_path="/new/manga/mangadex/99/chapters/legacy.cbz"
+assert(s:linkArchive(old_path,merge_manga,old_chapter,4,new_digest))
+assert(s:linkArchive(shared,merge_manga,new_chapter,3,new_digest))
+local merged,old_paths=s:mergeArchiveRecords(shared,merge_manga,new_digest)
+assert(merged and #old_paths==1 and old_paths[1]==old_path)
+assert(s:archiveFor("mangadex","99","legacy")==shared and s:archiveFor("mangadex","99","next")==shared)
+assert(s:archiveHasChapter(shared,"legacy") and #s:chaptersInArchive(shared)==2 and not s.data.archives[old_path])

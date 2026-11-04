@@ -11,7 +11,8 @@ function Store.open(settings)
     if type(raw) ~= "table" or raw.version ~= 1 or type(raw.manga) ~= "table" or type(raw.history) ~= "table" then return nil, "Invalid library data; original preserved" end
     if raw.archives == nil then raw.archives = {} end
     if raw.chapters == nil then raw.chapters = {} end
-    if type(raw.archives) ~= "table" or type(raw.chapters) ~= "table" then return nil, "Invalid chapter metadata; original preserved" end
+    if raw.chapter_sync == nil then raw.chapter_sync = {} end
+    if type(raw.archives) ~= "table" or type(raw.chapters) ~= "table" or type(raw.chapter_sync) ~= "table" then return nil, "Invalid chapter metadata; original preserved" end
     return setmetatable({settings=settings, data=raw}, Store)
 end
 function Store:save()
@@ -91,6 +92,17 @@ function Store:cacheChapters(manga,chapters)
     end
     return self:save()
 end
+function Store:markChaptersSynced(manga,count,timestamp,missing_count,latest_number)
+    local k=type(manga)=="table" and key(manga.source_id,manga.id)
+    if not k or type(count)~="number" or count<0 or count%1~=0 then return nil,"Invalid chapter synchronization state" end
+    if missing_count~=nil and (type(missing_count)~="number" or missing_count<0 or missing_count%1~=0 or missing_count>count) then return nil,"Invalid missing chapter count" end
+    if latest_number~=nil and (type(latest_number)~="number" or latest_number~=latest_number or latest_number==math.huge or latest_number==-math.huge) then return nil,"Invalid latest chapter number" end
+    local previous=self.data.chapter_sync[k]
+    self.data.chapter_sync[k]={count=count,missing_count=missing_count,latest_number=latest_number,checked_at=type(timestamp)=="number" and timestamp or os.time()}
+    local ok,err=self:save()
+    if not ok then self.data.chapter_sync[k]=previous; return nil,err end
+    return true
+end
 function Store:chapterStatus(source, chapter_id)
     local k=key(source,chapter_id)
     local item=k and self.data.chapters[k]
@@ -103,19 +115,130 @@ function Store:setChapterRead(source, chapter_id, is_read)
     item.read=is_read; self.data.chapters[k]=item
     return self:save()
 end
-function Store:linkArchive(path, manga, chapter, page_count)
+function Store:linkArchive(path, manga, chapter, page_count, digest)
     if type(path) ~= "string" or path == "" or type(manga) ~= "table" or type(chapter) ~= "table" or not key(manga.source_id,manga.id) or not key(manga.source_id,chapter.id) then return nil, "Invalid archive metadata" end
     local old=self.data.archives[path]
     if not page_count and type(old)=="table" then page_count=old.page_count end
-    self.data.archives[path] = {manga={id=manga.id,source_id=manga.source_id,title=manga.title},chapter={id=chapter.id,name=chapter.name},page_count=page_count}
-    return self:save()
+    if not digest and type(old)=="table" then digest=old.sha256 end
+    if digest and (type(digest)~="string" or #digest~=64 or not digest:match("^[0-9a-f]+$")) then return nil,"Invalid archive digest" end
+    local previous=type(old)=="table" and type(old.chapters)=="table" and type(old.chapters[chapter.id])=="table" and old.chapters[chapter.id]
+        or type(old)=="table" and type(old.chapter)=="table" and old.chapter or {}
+    local details={id=chapter.id,manga_id=manga.id,name=type(chapter.name)=="string" and chapter.name or previous.name,
+        url=type(chapter.url)=="string" and chapter.url or previous.url,
+        chapter_number=type(chapter.chapter_number)=="number" and chapter.chapter_number or previous.chapter_number,
+        scanlator=type(chapter.scanlator)=="string" and chapter.scanlator or previous.scanlator,
+        upload_date=type(chapter.upload_date)=="number" and chapter.upload_date or previous.upload_date,
+        page_count=page_count or previous.page_count}
+    local chapters={}
+    if type(old)=="table" and type(old.chapters)=="table" then
+        for id,meta in pairs(old.chapters) do if type(meta)=="table" then chapters[id]=meta end end
+    elseif type(old)=="table" and type(old.chapter)=="table" and type(old.chapter.id)=="string" then
+        chapters[old.chapter.id]={id=old.chapter.id,manga_id=old.chapter.manga_id,name=old.chapter.name,url=old.chapter.url,
+            chapter_number=old.chapter.chapter_number,scanlator=old.chapter.scanlator,upload_date=old.chapter.upload_date,page_count=old.page_count}
+    end
+    chapters[chapter.id]=details
+    local removed={}
+    local merging_manga_archive=path:sub(-10)=="/manga.cbz"
+    for other,item in pairs(self.data.archives) do
+        if other~=path and type(item)=="table" and type(item.manga)=="table" and item.manga.source_id==manga.source_id and item.manga.id==manga.id then
+            local other_chapters=type(item.chapters)=="table" and item.chapters or {}
+            local legacy=type(item.chapter)=="table" and item.chapter or nil
+            if not merging_manga_archive and (other_chapters[chapter.id] or legacy and legacy.id==chapter.id) then
+                removed[other]=item
+                if type(item.chapters)=="table" then
+                    item.chapters[chapter.id]=nil
+                    if next(item.chapters)==nil then self.data.archives[other]=nil end
+                else self.data.archives[other]=nil end
+            end
+        end
+    end
+    self.data.archives[path] = {manga={id=manga.id,source_id=manga.source_id,title=manga.title},chapter=details,chapters=chapters,
+        page_count=old and old.page_count or page_count,sha256=digest}
+    local ok,err=self:save()
+    if not ok then self.data.archives[path]=old; for other,item in pairs(removed) do self.data.archives[other]=item end; return nil,err end
+    return true
 end
 function Store:archiveFor(source,manga_id,chapter_id)
     if not key(source,manga_id) or not key(source,chapter_id) then return nil end
+    local manga_suffix="/manga/" .. source .. "/" .. manga_id .. "/manga.cbz"
     local suffix="/manga/" .. source .. "/" .. manga_id .. "/chapters/" .. chapter_id .. ".cbz"
     for path,item in pairs(self.data.archives) do
-        if type(path)=="string" and path:sub(1,1)=="/" and not path:find("%.%.") and path:sub(-#suffix)==suffix and type(item)=="table" and type(item.manga)=="table" and type(item.chapter)=="table" and item.manga.source_id==source and item.manga.id==manga_id and item.chapter.id==chapter_id then return path end
+        if type(path)=="string" and path:sub(1,1)=="/" and not path:find("%.%.") and type(item)=="table" and type(item.manga)=="table" and item.manga.source_id==source and item.manga.id==manga_id then
+            local chapters=type(item.chapters)=="table" and item.chapters or {}
+            local legacy=type(item.chapter)=="table" and item.chapter
+            if (path:sub(-#manga_suffix)==manga_suffix and chapters[chapter_id]) or (legacy and legacy.id==chapter_id and path:sub(-#suffix)==suffix) then return path end
+        end
     end
+end
+function Store:archiveHasChapter(path,chapter_id)
+    local item=self.data.archives[path]
+    return type(item)=="table" and ((type(item.chapters)=="table" and item.chapters[chapter_id]~=nil)
+        or (type(item.chapter)=="table" and item.chapter.id==chapter_id))
+end
+function Store:chaptersInArchive(path)
+    local item=self.data.archives[path]
+    if type(item)~="table" then return {} end
+    local out={}
+    if type(item.chapters)=="table" then
+        for _,chapter in pairs(item.chapters) do if type(chapter)=="table" then out[#out+1]=chapter end end
+    elseif type(item.chapter)=="table" then out[1]=item.chapter end
+    table.sort(out,function(a,b)
+        local an,bn=tonumber(a.chapter_number),tonumber(b.chapter_number)
+        if an and bn and an~=bn then return an<bn end
+        if an~=nil and bn==nil then return true end
+        if bn~=nil and an==nil then return false end
+        return tostring(a.name or a.id)<tostring(b.name or b.id)
+    end)
+    return out
+end
+function Store:archivePathsForManga(source,manga_id)
+    local out={}
+    for path,item in pairs(self.data.archives) do
+        if type(item)=="table" and type(item.manga)=="table" and item.manga.source_id==source and item.manga.id==manga_id then out[#out+1]=path end
+    end
+    table.sort(out)
+    return out
+end
+function Store:mergeArchiveRecords(path,manga,digest)
+    local target=self.data.archives[path]
+    if type(target)~="table" or type(target.manga)~="table" or target.manga.source_id~=manga.source_id or target.manga.id~=manga.id then return nil,"Missing manga archive record" end
+    if type(digest)~="string" or #digest~=64 or not digest:match("^[0-9a-f]+$") then return nil,"Invalid archive digest" end
+    local original={}
+    for archive_path,item in pairs(self.data.archives) do original[archive_path]=item end
+    local chapters={}
+    for _,chapter in ipairs(self:chaptersInArchive(path)) do chapters[chapter.id]=chapter end
+    local old_paths={}
+    for other,item in pairs(self.data.archives) do
+        if other~=path and type(item)=="table" and type(item.manga)=="table" and item.manga.source_id==manga.source_id and item.manga.id==manga.id then
+            for _,chapter in ipairs(self:chaptersInArchive(other)) do
+                if chapter.id and not chapters[chapter.id] then
+                    chapters[chapter.id]=chapter
+                end
+            end
+            self.data.archives[other]=nil
+            old_paths[#old_paths+1]=other
+        end
+    end
+    local ordered={}
+    for _,chapter in pairs(chapters) do ordered[#ordered+1]=chapter end
+    table.sort(ordered,function(a,b)
+        local an,bn=tonumber(a.chapter_number),tonumber(b.chapter_number)
+        if an and bn and an~=bn then return an<bn end
+        if an~=nil and bn==nil then return true end
+        if bn~=nil and an==nil then return false end
+        return tostring(a.name or a.id)<tostring(b.name or b.id)
+    end)
+    local page_count=0
+    for _,chapter in ipairs(ordered) do page_count=page_count+(tonumber(chapter.page_count) or 0) end
+    local latest=ordered[#ordered]
+    self.data.archives[path]={manga=target.manga,chapter=latest,chapters=chapters,page_count=page_count,sha256=digest}
+    local ok,err=self:save()
+    if not ok then self.data.archives=original; return nil,err end
+    return true,old_paths
+end
+function Store:archiveDigest(path)
+    local item=self.data.archives[path]
+    return type(item)=="table" and item.sha256 or nil
 end
 function Store:unlinkArchive(path)
     if type(path)~="string" then return nil,"Invalid archive path" end
@@ -124,7 +247,7 @@ function Store:unlinkArchive(path)
 end
 function Store:recordArchivePage(path, page, defer)
     local item=self.data.archives[path]
-    if type(item) ~= "table" then return false end
+    if type(item) ~= "table" or type(item.chapter)~="table" then return false end
     local k=key(item.manga.source_id,item.chapter.id)
     local status=self.data.chapters[k]
     if type(status)~="table" then status={} end

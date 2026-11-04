@@ -1,0 +1,8 @@
+local Digest=dofile("reader/file_digest.lua")
+local sha=dofile(os.getenv("KOREADER_BASE").."/ffi/sha2.lua")
+local file=os.tmpname(); local f=assert(io.open(file,"wb")); f:write("abc"); f:close()
+assert(Digest.hash(file,sha.sha256)=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+f=assert(io.open(file,"ab")); f:write("different"); f:close()
+assert(Digest.hash(file,sha.sha256)~="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+os.remove(file); assert(not Digest.hash(file,sha.sha256))
+print("Streaming SHA-256 digest tests passed")

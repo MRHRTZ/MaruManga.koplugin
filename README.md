@@ -1,24 +1,41 @@
-# MaruManga for KOReader
+# MaruManga Downloader for KOReader
 
-**Development version:** the browsing, downloads and reader integration are experimental and have not been verified together on a KOReader device. MangaDex requests from the development connection are currently blocked by a certificate redirect. This is not yet a release-ready manga reader.
+[![Latest release](https://img.shields.io/github/v/release/MRHRTZ/MaruManga.koplugin?label=Download%20latest)](https://github.com/MRHRTZ/MaruManga.koplugin/releases/latest)
 
-## Installation for testing
+MaruManga Downloader saves manga chapters as one CBZ archive per manga, manages a local library, and checks bookmarked titles for new chapters. It is a native Lua KOReader plugin. Chapter reading uses KOReader's document reader and downloaded files, so reading is available offline.
 
-1. Copy `MaruManga.koplugin` into KOReader's `plugins` directory, retaining all subdirectories.
-2. Restart KOReader. Open the tools menu, choose **More tools**, then **MaruManga**.
-3. In **Sources**, select MangaDex or add a source you are permitted to access. Search, select a title and chapter, and choose **Read** or **Download**.
+## Install
 
-The plugin uses KOReader's CBZ reader. Chapters are staged locally and a completed archive is published only if the filesystem supports a no-overwrite operation. The plugin does not intentionally replace existing downloads. A device may reject archive publication if neither safe operation is supported; this has not yet been tested on Android.
+1. Download the ZIP from [Latest release](https://github.com/MRHRTZ/MaruManga.koplugin/releases/latest).
+2. Extract the `MaruManga.koplugin` folder into KOReader's `plugins` directory. The final path should end in `plugins/MaruManga.koplugin/main.lua` (do not leave an extra nested folder).
+3. Restart KOReader.
+4. Open **Tools > MaruManga Downloader**.
 
-MangaDex chapter language defaults to English and can be changed in **Settings**. **Library**, **History**, and **Downloads** are available in the experimental menu. Reading progress, cancellation, and resume require device verification. Cancellation waits for an in-flight image request to finish or time out.
+For Android, the plugin directory is normally under KOReader's application data. See [Development documentation](docs/README.md) for locating it and installing with ADB.
 
-## HTML profiles
+## Use
 
-A Madara profile is supplied as a starting point and can be edited from **Sources**. Generic HTML profiles require search paths and CSS selectors to be configured. Only server-rendered HTML supported by KOReader's bundled `htmlparser` is handled. Configure image hosts explicitly if a source uses a different image domain. No JavaScript is executed. Sites differ, and no Madara or generic site has been verified.
+1. Open **Repositories** and refresh the default repository catalog. Install and enable **Komiku** if it is not already available. The default catalog is `https://raw.githubusercontent.com/MRHRTZ/maru-manga-repository/master/metadata.json`.
+2. Open **Discover**, choose Search, Popular, or Latest updates, and open a manga card.
+3. On the manga details page choose **Add to Library**.
+4. Choose **Download All Chapters** to queue all missing chapters, or open **Chapters** and download selected chapters. Chapters merge into a single `manga.cbz` for that title. Downloads can be monitored, refreshed, paused, continued, or cancelled from **Downloads**.
+5. Open **Library > Browse library**, select a title, then choose **Read Manga** to open its local CBZ in KOReader. The plugin blocks opening while that archive is being modified.
+6. Use **Library > Check Updates** to compare bookmarked titles with their source. Already downloaded chapters are excluded from the new chapter count and can be queued for download.
 
-The plugin does not bypass authentication, access restrictions, DRM, paywalls, or anti-bot challenges. It validates TLS certificates and fails closed when it cannot verify the hostname. If an access provider returns a certificate for another site, a request will fail.
+**Settings > Network and storage** controls the download directory (default `./marumanga` under KOReader's data directory), concurrent downloads (default 2), timeout, retries, DNS, and optional SSL certificate validation override. Keep SSL verification enabled unless a trusted network requires otherwise.
 
-## Tests and attribution
+## Update checks
 
-Fixture tests are in `tests/`; see [development notes](DEVELOPMENT.md) and [source compatibility](SOURCE_COMPATIBILITY.md) for their scope and current limitations. See [ATTRIBUTION.md](ATTRIBUTION.md) and [LICENSE](LICENSE). KOReader, MangaDex, source sites, and scanlation groups retain their respective rights and terms.
+**About > Check for updates** reads the version manifest at [release.json](https://raw.githubusercontent.com/MRHRTZ/MaruManga.koplugin/main/release.json). The manifest is intentionally a small, hardcoded raw GitHub endpoint; future releases update that file along with the GitHub release. When a newer version is found, the plugin reports the release page. The current update check does not silently replace plugin files.
 
+## Repository sources
+
+Source catalog data is maintained in [maru-manga-repository](https://github.com/MRHRTZ/maru-manga-repository). The plugin bundles reviewed source adapters; repository catalogs do not deliver or execute Lua code. Komiku is the active source. MangaRock and Mangago are listed as planned entries only. Mangago is marked NSFW. Source language and content tags are shown in repository management.
+
+## Project docs
+
+- [Development guide](docs/README.md)
+- [Source compatibility](docs/SOURCE_COMPATIBILITY.md)
+- [Attribution and licenses](docs/ATTRIBUTION.md)
+
+See [KOReader's license](LICENSE) for this plugin's license terms.

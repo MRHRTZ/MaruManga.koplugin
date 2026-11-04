@@ -14,3 +14,9 @@ source:getPageList({id="../bad"}, function(result, err) assert(not result and er
 transport.response = nil; transport.err = "HTTP 429"
 source:getPopularManga(1, function(result, err) assert(not result and err == "HTTP 429") end)
 print("MangaDex source tests passed")
+
+transport.err=nil; transport.response={data={},offset="bad",total=1}
+source:getPopularManga(1,function(result,err) assert(not result and err=="Invalid list pagination") end)
+local faulty=Source.new(transport,{manga=function() error("bad parser") end,pages=function() error("bad parser") end},"en")
+transport.response={data={{}},offset=0,total=1}; faulty:getPopularManga(1,function(result,err) assert(not result and err=="Invalid source response") end)
+transport.response={}; faulty:getPageList({id=id},function(result,err) assert(not result and err=="Invalid page response") end)

@@ -22,10 +22,13 @@ function Source:_list(path, query, page, limit, convert, callback)
         if type(data.data) ~= "table" then return callback(nil, "Invalid list response") end
         local items = {}
         for _, entry in ipairs(data.data) do
-            local item = convert(entry)
+            local ok,item = pcall(convert,entry)
+            if not ok then return callback(nil,"Invalid source response") end
             if item then items[#items+1] = item end
         end
-        callback({items=items, page=page, total=tonumber(data.total), has_next=(tonumber(data.offset or 0) + #data.data < (tonumber(data.total) or 0))})
+        local offset,total=tonumber(data.offset),tonumber(data.total)
+        if not offset or not total or offset<0 or total<0 or offset%1~=0 or total%1~=0 then return callback(nil,"Invalid list pagination") end
+        callback({items=items, page=page, total=total, has_next=(offset + #data.data < total)})
     end)
 end
 local includes = "&includes%5B%5D=cover_art&includes%5B%5D=author&includes%5B%5D=artist"
@@ -39,8 +42,8 @@ function Source:getMangaDetails(manga, callback)
     if not manga or not valid(manga.id) then return callback(nil, "Invalid manga ID") end
     self.transport:get(base .. "/manga/" .. manga.id .. "?" .. includes:sub(2), function(data, err)
         if not data then return callback(nil, err) end
-        local item = self.parser.manga(data.data)
-        if not item then return callback(nil, "Invalid manga details") end
+        local ok,item = pcall(self.parser.manga,data.data)
+        if not ok or not item then return callback(nil, "Invalid manga details") end
         callback(item)
     end)
 end
@@ -53,7 +56,8 @@ function Source:getPageList(chapter, callback)
     if not chapter or not valid(chapter.id) then return callback(nil, "Invalid chapter ID") end
     return self.transport:get(base .. "/at-home/server/" .. chapter.id, function(data, err)
         if not data then return callback(nil, err) end
-        local pages, parse_err = self.parser.pages(data)
+        local ok,pages,parse_err = pcall(self.parser.pages,data)
+        if not ok then return callback(nil,"Invalid page response") end
         callback(pages, parse_err)
     end)
 end

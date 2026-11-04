@@ -14,4 +14,11 @@ local callback, cancelled
 local job=Stager.start(deps,{{image_url="https://one"}},"out.cbz",function(ok,err) finished=err end)
 job:cancel(); assert(cancelled and next(files)~=nil)
 callback(nil,"Cancelled"); assert(finished == "Cancelled" and next(files)==nil)
+local build_callback,build_cancelled
+ deps.download=function(page,path,limit,cb) files[path]=true; cb({content_type="image/jpeg",size=4,prefix="\255\216\255x"}) end
+ deps.buildAsync=function(_,_,cb) build_callback=cb; return {cancel=function() build_cancelled=true end} end
+finished=nil; job=Stager.start(deps,{{image_url="https://one"}},"out.cbz",function(ok,err) finished=ok or err end)
+assert(not finished and next(files)); build_callback(true); assert(finished==true and next(files)==nil)
+finished=nil; job=Stager.start(deps,{{image_url="https://one"}},"out.cbz",function(ok,err) finished=ok or err end)
+job:cancel(); assert(build_cancelled and not finished); build_callback(nil,"cancelled"); assert(finished=="Cancelled" and next(files)==nil)
 print("Chapter staging tests passed")

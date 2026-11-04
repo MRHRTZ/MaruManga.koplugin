@@ -16,12 +16,27 @@ function Stager.start(deps, pages, target, callback)
     function job:cancel()
         if self.finished then return end
         self.cancelled = true
-        if self.cancel_download then self.cancel_download() else finish(nil, "Cancelled") end
+        if self.cancel_download then self.cancel_download()
+        elseif self.cancel_build then self.cancel_build()
+        else finish(nil, "Cancelled") end
     end
     local function next_page()
         if job.finished then return end
         index = index + 1
         if index > #pages then
+            if deps.buildAsync then
+                local completed=false
+                local function built(result,err)
+                    if completed then return end
+                    completed=true; job.cancel_build=nil
+                    if job.cancelled then return finish(nil,"Cancelled") end
+                    return finish(result,err)
+                end
+                local started,controller=pcall(deps.buildAsync,target,job.files,built)
+                if not started then return built(nil,"Archive creation failed") end
+                if not completed and type(controller)=="table" and type(controller.cancel)=="function" then job.cancel_build=function() controller:cancel() end end
+                return
+            end
             local ok, result, err = pcall(deps.build, target, job.files)
             if not ok then return finish(nil, "Archive creation failed") end
             return finish(result, err)

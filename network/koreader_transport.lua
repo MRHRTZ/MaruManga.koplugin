@@ -15,7 +15,7 @@ function M.new(ui, turbo, json, queue_class)
                 local client = turbo.async.HTTPClient({verify_ca=true}, nil, 2097152)
                 local response = coroutine.yield(client:fetch(url, {
                     method="GET", allow_redirects=false, connect_timeout=10, request_timeout=30,
-                    user_agent="MaruManga/0.1 (KOReader)",
+                    user_agent="MaruMangaDownloader/0.1 (KOReader)",
                 }))
                 pending = pending - 1
                 if pending == 0 then ui:resetInputTimeout() end

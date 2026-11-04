@@ -2,11 +2,15 @@
 local M = {}
 function M.new(ui, trapper, json, queue_class, secure_request, deps, options)
     options = options or {}
-    return queue_class.new({decode=options.decode or json.decode, accept_url=options.accept_url, valid=options.valid, max_attempts=options.max_attempts, cookies=options.cookies, on_result=options.on_result, schedule=function(delay, cb) ui:scheduleIn(delay, cb) end,
+    return queue_class.new({decode=options.decode or json.decode, accept_url=options.accept_url, valid=options.valid, max_attempts=options.max_attempts, interval=options.interval, cookies=options.cookies, on_result=options.on_result, schedule=function(delay, cb) ui:scheduleIn(delay, cb) end,
         request=function(url, callback, request_options)
             local function task()
                 local config=deps()
-                if request_options then config.method=request_options.method; config.body=request_options.body; config.headers=request_options.headers end
+                if request_options then
+                    config.method=request_options.method; config.body=request_options.body
+                    config.headers=config.headers or {}
+                    for name,value in pairs(request_options.headers or {}) do config.headers[name]=value end
+                end
                 local ok, a, b, c, d = pcall(secure_request.fetch, url, config)
                 if not ok then return nil, nil, "Secure request failed" end
                 return a, b, c, d

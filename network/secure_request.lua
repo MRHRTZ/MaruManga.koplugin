@@ -1,5 +1,6 @@
 -- HTTPS API request performed in a KOReader subprocess. Fail closed when
--- LuaSec cannot authenticate both the chain and the requested hostname.
+-- LuaSec cannot authenticate the chain and hostname unless the user explicitly
+-- enables the compatibility option to skip certificate validation.
 local M = {}
 local function certificate_matches(cert,host)
     if not cert or type(host)~="string" or not host:match("^[%w%.%-]+$") then return false end
@@ -59,26 +60,36 @@ function M.fetch(url, dependencies)
         return 1
     end
     local expected_host = host
+    local connect_host=host
+    if dependencies.resolve then
+        local resolved,resolve_error=dependencies.resolve(host)
+        if not resolved then return nil,nil,"DNS lookup failed: "..tostring(resolve_error or "no address") end
+        if type(resolved)~="string" or not resolved:match("^%d+%.%d+%.%d+%.%d+$") then return nil,nil,"DNS returned an invalid address" end
+        connect_host=resolved
+    end
     local function create()
         local tcp = assert(socket.tcp())
         local proxy = {}
         function proxy:settimeout(_) return tcp:settimeout(dependencies.timeout or 15) end
         function proxy:connect(host, port)
             if host ~= expected_host then return nil, "Unexpected host" end
-            local ok, err = tcp:connect(host, port); if not ok then return nil, err end
-            local tls; tls, err = ssl.wrap(tcp, {mode="client",protocol="any",verify="peer",capath=dependencies.capath,options={"all","no_sslv2","no_sslv3"}})
+            local ok, err = tcp:connect(connect_host, port); if not ok then return nil, err end
+            local tls; tls, err = ssl.wrap(tcp, {mode="client",protocol="any",verify=dependencies.ignore_ssl_certificates and "none" or "peer",cafile=dependencies.cafile,capath=dependencies.capath,options={"all","no_sslv2","no_sslv3"}})
             if not tls then return nil, err end
             tcp = tls
             if tls.sni then tls:sni(host) end
             tls:settimeout(dependencies.timeout or 15)
             local expected_during_handshake = false
-            if tls.sethost then
+            if tls.sethost and not dependencies.ignore_ssl_certificates then
                 local set, why = tls:sethost(host)
                 if not set then return nil, why or "Hostname verification unavailable" end
                 expected_during_handshake = true
             end
             ok, err = tls:dohandshake(); if not ok then return nil, err end
-            if not expected_during_handshake then
+            if dependencies.ignore_ssl_certificates then
+                -- Explicit compatibility mode skips CA and hostname checks.
+                -- HTTPS and the source host allowlist remain enforced above.
+            elseif not expected_during_handshake then
                 local cert = tls:getpeercertificate()
                 local match
                 if cert and cert.checkhost then
@@ -99,7 +110,7 @@ function M.fetch(url, dependencies)
         function proxy:dirty() return tcp:dirty() end
         return proxy
     end
-    local request_headers={host=port==443 and host or (host .. ":" .. port), accept=dependencies.images and "image/*" or (dependencies.accept or "application/json"), ["user-agent"]=dependencies.user_agent or "MaruManga/0.1 (KOReader)", connection="close"}
+    local request_headers={host=port==443 and host or (host .. ":" .. port), accept=dependencies.images and "image/*" or (dependencies.accept or "application/json"), ["user-agent"]=dependencies.user_agent or "MaruMangaDownloader/0.1 (KOReader)", connection="close"}
     if type(dependencies.headers)=="table" then
         for name,value in pairs(dependencies.headers) do
             if type(name)=="string" and name:match("^[%w%-]+$") and type(value)=="string" and #value<=4096 and not value:find("[%c]") then

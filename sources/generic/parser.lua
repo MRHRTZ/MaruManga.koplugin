@@ -36,7 +36,11 @@ function Parser.new(html,resolve,clean,profile,digest)
     local self={profile=profile}
     local function root(body)
         if type(body)~="string" or #body>2097152 then return nil,"Invalid HTML response" end
-        local ok,node=pcall(html.parse,body,5000)
+        -- Some server-rendered manga pages contain thousands of chapter-row
+        -- nodes. Keep parsing bounded but scale the token limit with response
+        -- size so large, valid pages are not silently truncated at 5,000 tags.
+        local parse_limit=math.min(50000,math.max(5000,math.floor(#body/2)))
+        local ok,node=pcall(html.parse,body,parse_limit)
         if not ok or not node then return nil,"Invalid HTML response" end
         return node
     end
@@ -49,7 +53,23 @@ function Parser.new(html,resolve,clean,profile,digest)
             local title=profile.list_title_selector and text(first(node,profile.list_title_selector),clean) or text(link,clean)
             if title=="" then title=text(link,clean) end
             if title=="" and link then local img=first(link,"img"); title=img and img.attributes.alt or "" end
-            if href and title~="" then items[#items+1]={id=digest(href),title=title,url=href,source_id=profile.id} end
+            if href and title~="" then
+                local item={id=digest(href),title=title,url=href,source_id=profile.id}
+                local cover=first_profile(node,profile.list_cover_selector,profile.list_cover_selectors)
+                if not cover and not profile.list_cover_selector and not profile.list_cover_selectors then cover=first(node,"img") end
+                if cover then
+                    local attributes=profile.list_cover_attributes or {profile.list_cover_attribute or "src","data-src","data-lazy-src","data-original"}
+                    for _,attribute in ipairs(attributes) do
+                        local raw=cover.attributes[attribute]
+                        if type(raw)=="string" and raw~="" then
+                            if attribute:find("srcset",1,true) then raw=raw:match("^%s*(%S+)") end
+                            item.cover_url=absolute(resolve,base,raw)
+                            if item.cover_url then break end
+                        end
+                    end
+                end
+                items[#items+1]=item
+            end
         end
         local nextnode=first_profile(doc,profile.next_selector,profile.next_selectors)
         local nexturl=nextnode and absolute(resolve,base,nextnode.attributes[profile.next_attribute or "href"])
@@ -57,10 +77,32 @@ function Parser.new(html,resolve,clean,profile,digest)
     end
     function self:details(body,base,manga)
         local doc,err=root(body); if not doc then return nil,err end
-        local item={id=manga.id,url=manga.url,source_id=profile.id,title=text(first(doc,profile.title_selector),clean),description=text(first(doc,profile.description_selector),clean),author=text(first(doc,profile.author_selector),clean),artist=text(first(doc,profile.artist_selector),clean),status=text(first(doc,profile.status_selector),clean),genres={}}
+        local function field(selector)
+            local node=first(doc,selector)
+            if not node then return "" end
+            local value=text(node,clean)
+            if value=="" and type(node.attributes)=="table" and type(node.attributes.content)=="string" then value=clean(node.attributes.content) end
+            return value
+        end
+        local item={id=manga.id,url=manga.url,source_id=profile.id,title=field(profile.title_selector),description=field(profile.description_selector),author=field(profile.author_selector),artist=field(profile.artist_selector),status=field(profile.status_selector),genres={}}
         if item.title=="" then item.title=manga.title end
         local cover=first(doc,profile.cover_selector)
         if cover then item.cover_url=absolute(resolve,base,cover.attributes[profile.cover_attribute or "src"]) end
+        -- Many server-rendered manga pages expose metadata as ordinary two-cell
+        -- table rows. This bounded fallback avoids source-specific :contains()
+        -- selectors, which KOReader's bundled HTML parser does not implement.
+        for _,row in ipairs(all(doc,profile.metadata_row_selector or "")) do
+            local cells=all(row,"td")
+            if #cells>=2 then
+                local label=text(cells[1],clean):lower():gsub("[%s:：]+$","")
+                local value=text(cells[2],clean)
+                if value~="" then
+                    if item.author=="" and (label=="author" or label=="author(s)" or label=="penulis") then item.author=value end
+                    if item.artist=="" and (label=="artist" or label=="illustrator" or label=="artis" or label=="ilustrator") then item.artist=value end
+                    if item.status=="" and (label=="status" or label=="serialization status") then item.status=value end
+                end
+            end
+        end
         for _,node in ipairs(all(doc,profile.genre_selector)) do local value=text(node,clean); if value~="" then item.genres[#item.genres+1]=value end end
         return item
     end
