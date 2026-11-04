@@ -1,8 +1,18 @@
+<p align="center">
+  <img src="images/maru-manga-reader.png" alt="MaruManga Downloader mascot" width="180">
+</p>
+
 # MaruManga Downloader for KOReader
 
 [![Latest release](https://img.shields.io/github/v/release/MRHRTZ/MaruManga.koplugin?label=Download%20latest)](https://github.com/MRHRTZ/MaruManga.koplugin/releases/latest)
 
 MaruManga Downloader saves manga chapters as one CBZ archive per manga, manages a local library, and checks bookmarked titles for new chapters. It is a native Lua KOReader plugin. Chapter reading uses KOReader's document reader and downloaded files, so reading is available offline.
+
+## Main menu
+
+<p align="center">
+  <img src="images/maru-manga-mainmenu.png" alt="MaruManga Downloader main menu in KOReader" width="480">
+</p>
 
 ## Install
 
