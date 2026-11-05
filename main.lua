@@ -53,12 +53,15 @@ local InputDialog = require("ui/widget/inputdialog")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
 local _ = require("gettext")
 local MainMenu = dofile(path .. "ui/main_menu.lua")
-local parser = dofile(path .. "sources/mangadex/parser.lua")
-local Source = dofile(path .. "sources/mangadex/source.lua")
 local GenericParser = dofile(path .. "sources/generic/parser.lua")
 local GenericSource = dofile(path .. "sources/generic/source.lua")
-local Madara = dofile(path .. "sources/madara/source.lua")
 local Komiku = dofile(path .. "sources/komiku/source.lua")
+local MangaMost = dofile(path .. "sources/mangamost/source.lua")
+local Mangago = dofile(path .. "sources/mangago/source.lua")
+local MangaRock = dofile(path .. "sources/mangarock/source.lua")
+local MangaRockParser = dofile(path .. "sources/mangarock/parser.lua")
+local Webtoon = dofile(path .. "sources/webtoon/source.lua")
+local WestManga = dofile(path .. "sources/westmanga/source.lua")
 local KomikuParser = dofile(path .. "sources/komiku/parser.lua")
 local Client = dofile(path .. "network/client.lua")
 local Transport = dofile(path .. "network/subprocess_transport.lua")
@@ -74,6 +77,7 @@ local Builder = dofile(path .. "reader/cbz_builder.lua")
 local ImageValidation = dofile(path .. "reader/image_validation.lua")
 local FileDigest = dofile(path .. "reader/file_digest.lua")
 local ArchiveScan = dofile(path .. "core/archive_scan.lua")
+local AllSourceSearch = dofile(path .. "core/all_source_search.lua")
 local LocalArchive = dofile(path .. "core/local_archive.lua")
 local ArchiveCheck = dofile(path .. "reader/archive_check.lua")
 local FileSystem = dofile(path .. "reader/filesystem.lua")
@@ -91,6 +95,51 @@ local function repositorySources(repo)
     end
     return available
 end
+local function languageLabel(languages)
+    if type(languages)~="table" or #languages==0 then return "" end
+    local codes={}
+    for _,language in ipairs(languages) do
+        if type(language)=="string" and language:match("^[a-z][a-z%-]*$") then codes[#codes+1]=language:upper() end
+    end
+    return table.concat(codes,"-")
+end
+local function sourceIconUrl(entry)
+    if type(entry)~="table" then return nil end
+    if type(entry.icon_url)=="string" then return entry.icon_url end
+    local domain=type(entry.base_url)=="string" and entry.base_url:match("^https://([%w%.%-]+)$")
+    if domain then return "https://www.google.com/s2/favicons?domain="..domain.."&sz=64" end
+end
+local function bundledSourceIcon(entry)
+    if type(entry)~="table" or type(entry.id)~="string" or not entry.id:match("^[%w_-]+$") then return nil end
+    for _,extension in ipairs({"png","jpg","webp"}) do
+        local file=path.."images/sources/"..entry.id.."."..extension
+        local handle=io.open(file,"rb")
+        if handle then handle:close(); return file end
+    end
+end
+local function sourceCompatibilityIssue(entry)
+    if type(entry)~="table" then return _("Invalid source catalog entry") end
+    if entry.adapter=="planned" then return _("This source is planned but has no adapter") end
+    if entry.adapter=="generic" or entry.adapter=="madara" then
+        local profile=entry.profile or {}
+        local missing={}
+        local function has_path(key,query)
+            local value=profile[key]
+            if type(value)~="string" then return false end
+            local local_path=(value:sub(1,1)=="/" and value:sub(1,2)~="//") or value:sub(1,12)=="{page_path}/"
+            return local_path and (not query or value:find("{query}",1,true)~=nil)
+        end
+        if not has_path("search_path",true) then missing[#missing+1]=_("search path with {query}") end
+        if not has_path("popular_path") then missing[#missing+1]=_("popular path") end
+        if not has_path("latest_path") then missing[#missing+1]=_("latest path") end
+        if not (type(profile.list_selector)=="string" and profile.list_selector~="" or type(profile.list_selectors)=="table" and #profile.list_selectors>0) then missing[#missing+1]=_("manga list selector") end
+        if type(profile.chapter_selector)~="string" or profile.chapter_selector=="" then missing[#missing+1]=_("chapter selector") end
+        if type(profile.page_selector)~="string" or profile.page_selector=="" then missing[#missing+1]=_("page image selector") end
+        if #missing>0 then return _("Missing profile fields: ")..table.concat(missing,", ") end
+    elseif entry.adapter~="komiku" and entry.adapter~="mangamost" and entry.adapter~="mangago" and entry.adapter~="mangarock" and entry.adapter~="webtoon" and entry.adapter~="westmanga" then
+        return _("This plugin version does not support the source adapter")
+    end
+end
 local MaruManga = WidgetContainer:extend{ name="marumanga", is_doc_only=false }
 local function loadingMessage(text)
     -- A zero timeout is scheduled immediately by KOReader. Keep this modal
@@ -100,8 +149,8 @@ local function loadingMessage(text)
     if message.movable and message.movable[1] then message.movable[1].radius=require("device").screen:scaleBySize(12) end
     return message
 end
-local PLUGIN_VERSION="0.1.0"
-local PLUGIN_LAST_UPDATE="2026-11-04"
+local PLUGIN_VERSION="0.2.1"
+local PLUGIN_LAST_UPDATE="2026-11-05"
 function MaruManga:init()
     self.ui.menu:registerToMainMenu(self)
     self.source_errors={}
@@ -114,6 +163,10 @@ function MaruManga:init()
     self.config, self.config_error = Settings.open(store)
     self.library, self.library_error = Library.open(store)
     self.repositories, self.repository_error = Repositories.open(store)
+    if self.config and self.repositories then
+        local ok,err=pcall(self.installDefaultCatalogSources,self)
+        if not ok then self.default_source_install_error=tostring(err) end
+    end
     self.downloads, self.download_error = DownloadQueue.open(store,function(item,done)
         return self:startChapter(item.manga,item.chapter,done,item)
     end,function() return self.config and self.config.data.download_concurrency or 2 end)
@@ -150,13 +203,24 @@ function MaruManga:dependenciesFor(id)
     local deps=applyDNS(networkDependencies(),self.config.data)
     deps.timeout=self.config.data.timeout; deps.user_agent=self.config.data.user_agent
     deps.ignore_ssl_certificates=self.config.data.ignore_ssl_certificates==true
-    if id and id~="mangadex" then
+    if id then
         local profile=self:profile(id)
         if not profile then return nil end
         local host=profile.base_url:match("^https://([%w%.%-]+)$")
         if not host then return nil end
-        deps.allowed_hosts={[host]=true}; deps.accept="text/html"
-        if profile.kind=="komiku" then
+        deps.allowed_hosts={[host]=true}; deps.accept=(profile.kind=="mangamost" or profile.kind=="westmanga") and "application/json, text/html;q=0.9, */*;q=0.8" or "text/html"
+        if profile.kind=="mangago" then
+            if profile.id~="mangago" or profile.base_url~="https://www.mangago.zone" then return nil end
+            -- Mangago's current edge certificate chain fails validation in
+            -- this runtime. Keep HTTPS and its exact host allowlist, but scope
+            -- the certificate bypass to Mangago instead of changing other sources.
+            deps.ignore_ssl_certificates=true
+        end
+        if profile.kind=="mangamost" then
+            if profile.base_url~="https://mangamost.com" or profile.api_url~="https://mangamost.com/api/v1" then return nil end
+            deps.allowed_hosts["mangamost.com"]=true
+            deps.headers={Accept="application/json"}
+        elseif profile.kind=="komiku" then
             if profile.base_url~="https://komiku.org" or profile.api_url~="https://api.komiku.org" then return nil end
             deps.allowed_hosts["api.komiku.org"]=true
             deps.headers={ ["Accept-Language"]="id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7" }
@@ -175,18 +239,14 @@ function MaruManga:source(id)
     if self.manga_sources[id] then return self.manga_sources[id] end
     local json=require("json")
     local source
-    if id=="mangadex" then
-        if not self.config.data.mangadex_installed or not self.config.data.mangadex_enabled then self:notice(_("Source is unavailable or disabled")); return end
-        local transport=Transport.new(UIManager,require("ui/trapper"),json,Client,SecureRequest,function() return self:dependenciesFor("mangadex") end,{max_attempts=self.config.data.retries,runner=self:runner(),deadline=self.config.data.timeout*2+10,on_result=function(err) self.source_errors[id]=err end})
-        source=Source.new(transport,parser,self.config.data.language)
-    else
+    do
         local config=self:profile(id)
         if not config or config.enabled==false then self:notice(_("Source is unavailable or disabled")); return end
-        local profile=config.kind=="madara" and Madara.profile(config) or config
+        local profile=config
         local base=profile.base_url
         local transport=Transport.new(UIManager,require("ui/trapper"),json,Client,SecureRequest,function() return self:dependenciesFor(id) end,{
             decode=function(body) return body end, valid=function(body) return type(body)=="string" end, max_attempts=self.config.data.retries, interval=config.kind=="komiku" and 0.5 or nil, runner=self:runner(), deadline=self.config.data.timeout*2+10, cookies=CookieJar.new(), on_result=function(err) self.source_errors[id]=err end,
-            accept_url=function(url) return url==base or url:sub(1,#base+1)==base.."/" or config.kind=="komiku" and (url==config.api_url or url:sub(1,#config.api_url+1)==config.api_url.."/") end,
+            accept_url=function(url) return url==base or url:sub(1,#base+1)==base.."/" or (config.kind=="komiku" or config.kind=="mangamost") and (url==config.api_url or url:sub(1,#config.api_url+1)==config.api_url.."/") end,
         })
         local html=require("htmlparser")
         local url=require("socket.url")
@@ -198,8 +258,23 @@ function MaruManga:source(id)
             profile.api_url=config.api_url
             parsed=KomikuParser.new(html,url.absolute,util.htmlToPlainText,profile,digest)
             source_class=Komiku
+        elseif config.kind=="mangamost" then
+            parsed=nil
+            source_class=MangaMost
+        elseif config.kind=="mangago" then
+            source_class=Mangago
+        elseif config.kind=="webtoon" then
+            source_class=Webtoon
+        elseif config.kind=="westmanga" then
+            parsed=nil
+            source_class=WestManga
+        elseif config.kind=="mangarock" then
+            parsed=MangaRockParser.new(html,url.absolute,util.htmlToPlainText,profile,digest)
+            source_class=MangaRock
         end
-        local ok,result=pcall(source_class.new,profile,parsed,transport)
+        local ok,result
+        if config.kind=="webtoon" then ok,result=pcall(source_class.new,profile,parsed,transport,html)
+        else ok,result=pcall(source_class.new,profile,parsed,transport) end
         if not ok then self:notice(_("Invalid source configuration")); return end
         source=result
     end
@@ -265,6 +340,79 @@ function MaruManga:findCachedCover(manga)
         if exists_ok and exists then return file end
     end
 end
+function MaruManga:findCachedSourceIcon(entry)
+    if type(entry)~="table" or type(entry.id)~="string" or not entry.id:match("^[%w_-]+$") then return nil end
+    local ok,lfs=pcall(require,"libs/libkoreader-lfs")
+    if not ok then return nil end
+    local dir=self:downloadRoot().."/cache/source-icons"
+    for _,extension in ipairs({"png","jpg","webp","gif"}) do
+        local file=dir.."/"..entry.id.."."..extension
+        local mode=lfs.symlinkattributes and lfs.symlinkattributes(file,"mode") or lfs.attributes(file,"mode")
+        if mode=="file" then return file end
+    end
+end
+function MaruManga:cacheSourceIcon(entry,callback)
+    callback=callback or function() end
+    local cached=self:findCachedSourceIcon(entry)
+    if cached then return callback(cached) end
+    if type(entry)~="table" then return callback(nil) end
+    local icon_url=sourceIconUrl(entry)
+    if type(icon_url)~="string" then return callback(nil) end
+    local id=entry.id
+    if type(id)~="string" or not id:match("^[%w_-]+$") then return callback(nil) end
+    self.source_icon_attempts=self.source_icon_attempts or {}
+    self.source_icon_waiters=self.source_icon_waiters or {}
+    if self.source_icon_waiters[id] then self.source_icon_waiters[id][#self.source_icon_waiters[id]+1]=callback; return end
+    if self.source_icon_attempts[id] then return callback(nil) end
+    local host=icon_url:match("^https://([%w%.%-]+)/")
+    if not host or #icon_url>2048 or icon_url:find("[%c%s#]") then return callback(nil) end
+    self.source_icon_attempts[id]=true
+    self.source_icon_waiters[id]={callback}
+    local function finish(file)
+        local waiters=self.source_icon_waiters[id] or {}
+        self.source_icon_waiters[id]=nil
+        for _,done in ipairs(waiters) do pcall(done,file) end
+    end
+    local ok,lfs=pcall(require,"libs/libkoreader-lfs")
+    if not ok then finish(nil); return end
+    local root=self:downloadRoot()
+    local directory=""
+    for part in root:gmatch("[^/]+") do
+        directory=directory.."/"..part
+        local mode=lfs.symlinkattributes and lfs.symlinkattributes(directory,"mode") or lfs.attributes(directory,"mode")
+        if mode and mode~="directory" then finish(nil); return end
+        if not mode and not lfs.mkdir(directory) then finish(nil); return end
+    end
+    for _,suffix in ipairs({"/cache","/cache/source-icons"}) do
+        directory=directory..suffix
+        local mode=lfs.symlinkattributes and lfs.symlinkattributes(directory,"mode") or lfs.attributes(directory,"mode")
+        if mode and mode~="directory" then finish(nil); return end
+        if not mode and not lfs.mkdir(directory) then finish(nil); return end
+    end
+    local temp=directory.."/"..id..".download"
+    os.remove(temp)
+    local made,downloader=pcall(Downloader.new,require("ui/trapper"),SecureRequest,function()
+        local deps=applyDNS(networkDependencies(),self.config.data)
+        deps.timeout=self.config.data.timeout; deps.user_agent=self.config.data.user_agent
+        deps.ignore_ssl_certificates=self.config.data.ignore_ssl_certificates==true
+        deps.allowed_hosts={[host]=true}; deps.images=true
+        deps.headers={Accept="image/png, image/jpeg, image/webp, image/gif"}
+        return deps
+    end,nil,self:runner(),self.config.data.timeout*2+15)
+    if not made or type(downloader)~="function" then os.remove(temp); finish(nil); return end
+    local fs_ok,fs=pcall(self.filesystem,self)
+    if not fs_ok then os.remove(temp); finish(nil); return end
+    local started=pcall(downloader,{image_url=icon_url,referer=entry.base_url,headers={Accept="image/png, image/jpeg, image/webp, image/gif"}},temp,65536,function(meta)
+        if not meta then os.remove(temp); return finish(nil) end
+        local extension=ImageValidation.validate(meta.content_type,meta.size,meta.prefix,65536)
+        if not extension then os.remove(temp); return finish(nil) end
+        local target=directory.."/"..id.."."..extension
+        local published=fs.publishNoReplace(temp,target)
+        if published or fs.exists(target) then return finish(target) end
+        os.remove(temp); finish(nil)
+    end)
+    if not started then os.remove(temp); finish(nil) end
+end
 function MaruManga:cacheCover(manga,callback)
     callback=callback or function() end
     local existing=self:findCachedCover(manga)
@@ -304,6 +452,13 @@ end
 function MaruManga:prefetchVisibleCovers(items,first,last,page)
     if type(items)~="table" then return end
     local index=first
+    local function renderCover(item,file,page_manga)
+        item.maru_cover_pending=nil
+        if file then item.maru_image=file else item.maru_cover_failed=true end
+        if file and self.main_menu and self.main_menu.visible and self.main_menu.current_page==page_manga then
+            self.main_menu:renderCurrentPage()
+        end
+    end
     local function next_cover()
         while index<=last do
             local item=items[index]
@@ -311,13 +466,26 @@ function MaruManga:prefetchVisibleCovers(items,first,last,page)
             local manga=item and item.maru_manga
             if manga and not item.maru_image and not item.maru_cover_failed and not item.maru_cover_pending then
                 item.maru_cover_pending=true
+                local function finish(file) renderCover(item,file,page); next_cover() end
                 self:cacheCover(manga,function(file)
-                    item.maru_cover_pending=nil
-                    if file then item.maru_image=file else item.maru_cover_failed=true end
-                    if file and self.main_menu and self.main_menu.visible and self.main_menu.current_page==page then
-                        self.main_menu:renderCurrentPage()
-                    end
-                    next_cover()
+                    if file then return finish(file) end
+                    -- Some source list rows contain a stale or low-resolution
+                    -- cover URL while the detail page exposes the current cover.
+                    -- Retry only visible cards and only once, keeping requests serial.
+                    if item.maru_cover_detail_attempted then return finish(nil) end
+                    item.maru_cover_detail_attempted=true
+                    local ok,source=pcall(self.source,self,manga.source_id)
+                    if not ok or not source or type(source.getMangaDetails)~="function" then return finish(nil) end
+                    local original=manga.cover_url
+                    local replied=false
+                    local started=pcall(source.getMangaDetails,source,manga,function(detail)
+                        if replied then return end; replied=true
+                        local detail_url=type(detail)=="table" and detail.cover_url
+                        if type(detail_url)~="string" or not detail_url:match("^https://") or detail_url==original then return finish(nil) end
+                        manga.cover_url=detail_url
+                        self:cacheCover(manga,finish)
+                    end)
+                    if not started and not replied then replied=true; finish(nil) end
                 end)
                 return
             end
@@ -325,11 +493,12 @@ function MaruManga:prefetchVisibleCovers(items,first,last,page)
     end
     next_cover()
 end
-function MaruManga:loadList(title, fetch, convert, page)
+function MaruManga:loadList(title, fetch, convert, page, options)
     page = page or 1
-    local loading = loadingMessage(_("Loading…"))
-    show(loading)
-    local loading_open=true
+    options=options or {}
+    local loading = not options.no_loading and loadingMessage(_("Loading…")) or nil
+    if loading then show(loading) end
+    local loading_open=loading~=nil
     local function closeLoading()
         if loading_open then loading_open=false; UIManager:close(loading) end
     end
@@ -343,16 +512,50 @@ function MaruManga:loadList(title, fetch, convert, page)
                 local source=self:source(item.source_id)
                 local languages=source and source:getLanguages() or {}
                 local latest=item.latest_chapter or item.latestChapter or item.chapter or ""
-                items[#items+1] = {text=convert(item),maru_title=item.title or convert(item),maru_meta=(source and source:getName() or item.source_id)..(#languages>0 and (" · ("..table.concat(languages,", ")..")") or ""),maru_progress=latest~="" and tostring(latest) or "",maru_manga=item,maru_image=self:findCachedCover(item),action=function() self:showManga(item) end}
+                if type(latest)=="table" then latest=latest.name or latest.title or latest.chapter_number or "" end
+                if latest~="" and not tostring(latest):lower():find("chapter",1,true) and not tostring(latest):lower():match("^ch[%s%.]?") then latest="Chapter "..tostring(latest) end
+                items[#items+1] = {text=convert(item),maru_title=item.title or convert(item),maru_meta=(source and source:getName() or item.source_id)..(#languages>0 and (" · "..languageLabel(languages)) or ""),maru_progress=latest~="" and tostring(latest) or "",maru_manga=item,maru_image=self:findCachedCover(item),action=function() self:showManga(item) end}
             end
             local has_results=#items>0
             if not has_results then items[#items+1]={text=_("No matching titles"),maru_no_icon=true} end
-            self:menu(title, items,nil,false,nil,{grid=has_results,page_limit=6,page_title=has_results and title or nil,external_next=has_results and result.has_next and {text=_("Load more results"),action=function() self:loadList(title,fetch,convert,page+1) end} or nil,on_page=function(first,last)
+            local external_next=options.external_next or {text=_("Load more results"),action=function() self:loadList(title,fetch,convert,page+1,options) end}
+            self:menu(title, items,nil,false,nil,{grid=has_results,page_limit=6,page_title=has_results and title or nil,external_next=has_results and result.has_next and external_next or nil,on_page=function(first,last)
                 self:prefetchVisibleCovers(items,first,last,self.main_menu and self.main_menu.current_page)
             end})
         end)
         if not ok then closeLoading(); self:notice(err) end
     end)
+end
+function MaruManga:searchAllManga(query,page)
+    page=math.max(1,math.floor(tonumber(page) or 1))
+    local enabled={}
+    for _,profile in ipairs(self.config.data.profiles or {}) do
+        if profile.enabled~=false then enabled[#enabled+1]=profile end
+    end
+    if #enabled==0 then return self:notice(_("No enabled sources are installed. Use Manage Sources to enable one.")) end
+    local loading
+    local function closeLoading()
+        if loading then UIManager:close(loading); loading=nil end
+    end
+    local function finish(result,failure)
+        closeLoading()
+        if not result then return self:notice(failure or first_error or _("Could not search enabled sources.")) end
+        self:loadList(_("Search"),function(_,callback) callback(result) end,function(manga) return manga.title end,page,{
+            no_loading=true,
+            external_next={text=_("Load more results"),action=function() self:searchAllManga(query,page+1) end},
+        })
+    end
+    local ok,err=pcall(AllSourceSearch.run,enabled,query,page,function(profile) return self:source(profile.id) end,
+        function(task) UIManager:nextTick(task) end,
+        function(index,total)
+            closeLoading()
+            loading=loadingMessage(_("Searching manga...").." ("..index.."/"..total..")")
+            show(loading)
+        end,finish)
+    if not ok then
+        closeLoading()
+        self:notice(err or _("Could not search enabled sources."))
+    end
 end
 function MaruManga:showManga(manga)
     local source = self:source(manga.source_id); if not source then return end
@@ -392,11 +595,12 @@ function MaruManga:showManga(manga)
             end}
         end
         local function showDetails(cover)
+            local description=present(detail.description)
             self:menu(detail.title,items,nil,false,nil,{
                 hero=cover,
                 hero_icon=not cover,
                 page_limit=#items,
-                description=present(detail.description)==_("Unknown") and _("No description") or detail.description,
+                description=description==_("Unknown") and _("No description") or description,
             })
         end
         self:cacheCover(detail,showDetails)
@@ -695,6 +899,7 @@ function MaruManga:search(source_id)
         local query = dialog:getInputText()
         if query == "" then return end
         UIManager:close(dialog)
+        if not source_id then return self:searchAllManga(query,1) end
         local source = self:source(source_id); if source then self:loadList(_("Search"), function(page, cb) source:searchManga(query,page,cb) end, function(m) return m.title end) end
     end}}}}
     show(dialog); dialog:onShowKeyboard()
@@ -720,7 +925,7 @@ function MaruManga:addHtmlSource(kind)
     show(dialog); dialog:onShowKeyboard()
 end
 function MaruManga:editProfile(profile)
-    local fields={"base_url","search_path","popular_path","latest_path","list_selector","list_link_selector","list_title_selector","next_selector","title_selector","description_selector","author_selector","artist_selector","status_selector","genre_selector","cover_selector","cover_attribute","chapter_selector","chapter_link_selector","chapter_attribute","chapter_mode","chapter_ajax_suffix","page_selector","page_attribute","image_hosts"}
+    local fields={"base_url","search_path","popular_path","latest_path","list_selector","list_link_selector","list_title_selector","next_selector","title_selector","description_selector","author_selector","artist_selector","status_selector","genre_selector","cover_selector","cover_attribute","chapter_selector","chapter_link_selector","chapter_attribute","chapter_mode","chapter_ajax_suffix","latest_selector","latest_label","page_selector","page_attribute","image_hosts"}
     local defaults=profile.kind=="madara" and Madara.profile(profile) or profile
     local items={}
     for ignored_index,name in ipairs(fields) do
@@ -778,6 +983,10 @@ function MaruManga:refreshRepository(repo,options)
             local previous,previous_error=repo.unreachable,repo.last_error; repo.unreachable=nil; repo.last_error=nil
             ok,why=self.repositories:update(repo,catalog)
             if not ok then repo.unreachable=previous; repo.last_error=previous_error or why end
+            if ok and repo.builtin then
+                local install_ok,install_error=self:installDefaultCatalogSources()
+                if install_ok==nil then ok=false; why=install_error end
+            end
         end
         if options.callback then pcall(options.callback,ok,why) end
         if not options.silent then self:notice(ok and _("Repository refreshed") or why) end
@@ -786,7 +995,7 @@ end
 function MaruManga:showRepositories(page)
     if not self.repositories then return self:notice(self.repository_error) end
     page=math.max(1,tonumber(page) or 1)
-    local items={{text=_("Add Repository"),action=function()
+    local items={{text=_("Add Repositories"),action=function()
         local dialog
         dialog=InputDialog:new{title=_("HTTPS catalog URL"),input="https://",buttons={{{text=_("Cancel"),callback=function() UIManager:close(dialog) end},{text=_("Add"),callback=function()
             local repo,err=self.repositories:add(dialog:getInputText())
@@ -798,7 +1007,7 @@ function MaruManga:showRepositories(page)
         end}}}}
         show(dialog); dialog:onShowKeyboard()
     end}}
-    items[#items+1]={text=_("Refresh Repositories"),action=function()
+    items[#items+1]={text=_("Refresh Repositories"),group_end=true,action=function()
         local repos=self.repositories:list(); local index=1
         local function nextRepo()
             local repo=repos[index]; index=index+1
@@ -811,7 +1020,6 @@ function MaruManga:showRepositories(page)
         nextRepo()
     end}
     local all_repos=self.repositories:list()
-    items[#items+1]={text=_("Total Repository: ")..#all_repos,group_end=true}
     local function installedCount(repo)
         local count=0; local origin=repo.url or "builtin"
         for _,entry in ipairs(repositorySources(repo)) do
@@ -831,7 +1039,7 @@ function MaruManga:showRepositories(page)
     end
     if page>1 then items[#items+1]={text=_("Previous page"),action=function() self:showRepositories(page-1) end} end
     if last<#all_repos then items[#items+1]={text=_("Next page"),action=function() self:showRepositories(page+1) end} end
-    self:menu(_("Repositories"),clickable(items),nil,true)
+    self:menu(_("Repositories").." ("..#all_repos..")",clickable(items),nil,true)
 end
 function MaruManga:searchRepositorySources(repo,query)
     local dialog
@@ -870,14 +1078,14 @@ function MaruManga:showRepository(repo)
         {text=_("Refresh Repository"),icon=path.."images/menu/refresh.svg",action=function() self:refreshRepository(repo,{callback=function(ok) if ok then self:showRepository(repo) end end}) end},
         {text=_("Sources: ")..#sources.."  ·  "..installed_count.."/"..#sources.." ".._("Installed"),icon=path.."images/menu/source.svg",group_end=true,action=function() self:showRepositorySources(repo) end},
     }
-    if not repo.builtin then items[#items+1]={text=_("Delete Repository"),icon=path.."images/menu/close.svg",action=function()
+    items[#items+1]={text=_("Delete Repository"),icon=path.."images/menu/close.svg",action=function()
         show(ConfirmBox:new{text=_("Delete this repository? Installed sources and downloads remain."),ok_text=_("Delete"),ok_callback=function()
             local ok,err=self.repositories:remove(repo); self:notice(ok and _("Repository deleted") or err); self:showRepositories()
         end})
-    end} end
+    end}
     self:menu(title,clickable(items),nil,true,nil,{page_limit=#items})
 end
-function MaruManga:showRepositorySources(repo,source_query,page)
+function MaruManga:showRepositorySources(repo,source_query,page,replace_page)
     local catalog=repo.catalog
     local title=repo.title or (catalog and catalog.name) or repo.url
     local sources=repositorySources(repo)
@@ -899,16 +1107,20 @@ function MaruManga:showRepositorySources(repo,source_query,page)
         local profile=entry.id=="mangadex" and self.config.data.mangadex_installed or self:profile(entry.id)
         local disabled=entry.id=="mangadex" and profile and not self.config.data.mangadex_enabled or type(profile)=="table" and profile.enabled==false
         local outdated=type(profile)=="table" and Repositories.versionLess(profile.repository_version or 0,entry.version)
-        local state=entry.adapter=="planned" and _("Planned") or disabled and _("Disabled") or outdated and _("Update available") or profile and _("Installed") or _("Available")
+        local compatibility=sourceCompatibilityIssue(entry)
+        local state=compatibility and _("Unsupported") or disabled and _("Disabled") or outdated and _("Update available") or profile and _("Installed") or _("Available")
         local tags=""
         if entry.nsfw then tags=tags.." [NSFW]" end
-        if entry.languages and #entry.languages>0 then tags=tags.." ("..table.concat(entry.languages,", ")..")" end
-        items[#items+1]={text=entry.name..tags.."  ·  "..state,action=function() self:catalogSourceDialog(repo,entry) end}
+        if entry.languages and #entry.languages>0 then tags=tags.." "..languageLabel(entry.languages) end
+        local installed=profile~=nil
+        local row={text=entry.name..tags.."  ·  "..state,icon=path.."images/menu/"..(installed and "check-on" or "check-off")..".svg",action=function() self:catalogSourceDialog(repo,entry) end}
+        items[#items+1]=row
     end
     if #sources==0 then items[#items+1]={text=_("No sources in this repository")} elseif #filtered==0 then items[#items+1]={text=_("No matching sources")} end
     if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/back.svg",action=function() self:showRepositorySources(repo,source_query,page-1) end} end
     if last<#filtered then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next.svg",action=function() self:showRepositorySources(repo,source_query,page+1) end} end
-    self:menu(title.." · Sources · Page "..page,clickable(items),nil,true)
+    local page_title=title.." · Sources · Page "..page
+    self:menu(page_title,clickable(items),nil,true,replace_page)
 end
 function MaruManga:editRepository(repo)
     local catalog=repo.catalog
@@ -937,9 +1149,10 @@ function MaruManga:catalogSourceDialog(repo,entry)
     if entry.id=="mangadex" or entry.adapter=="mangadex" then return self:notice(_("MangaDex is no longer available")) end
     local installed=entry.id=="mangadex" and self.config.data.mangadex_installed or self:profile(entry.id)
     local conflict=type(installed)=="table" and installed.repository_url~=(repo.url or "builtin")
-    local items={{text=_("Version: ")..tostring(entry.version)},{text=_("Languages: ")..table.concat(entry.languages or {},", ")}}
+    local compatibility=sourceCompatibilityIssue(entry)
+    local items={{text=_("Version: ")..tostring(entry.version)},{text=_("Languages: ")..languageLabel(entry.languages)}}
     if entry.nsfw then items[#items+1]={text=_("Content: NSFW")} end
-    if entry.adapter=="planned" then items[#items+1]={text=_("Adapter not available yet")}
+    if compatibility then items[#items+1]={text=_("Unsupported: ")..compatibility}
     elseif conflict then items[#items+1]={text=_("Source ID belongs to another repository")}
     elseif not installed then items[#items+1]={text=_("Install"),action=function() if self:installCatalogSource(repo,entry) then self:showRepositorySources(repo) end end}
     else
@@ -964,12 +1177,12 @@ end
 function MaruManga:massSourceAction(repo,install)
     local entries={}; for _,entry in ipairs(repositorySources(repo)) do
         local active=self:profile(entry.id)
-        if entry.adapter~="planned" and (install or active) then entries[#entries+1]=entry end
+        if not sourceCompatibilityIssue(entry) and (install or active) then entries[#entries+1]=entry end
     end
     local selected={}; for _,entry in ipairs(entries) do selected[entry.id]=install end
     local function render()
         local items={}
-        for _,entry in ipairs(entries) do local item=entry; items[#items+1]={text=(selected[item.id] and "[x] " or "[ ] ")..item.name,action=function() selected[item.id]=not selected[item.id]; render() end} end
+        for _,entry in ipairs(entries) do local item=entry; items[#items+1]={text=item.name,icon=path.."images/menu/"..(selected[item.id] and "check-on" or "check-off")..".svg",action=function() selected[item.id]=not selected[item.id]; render() end} end
     items[#items+1]={text=install and _("Install selected") or _("Uninstall selected"),action=function()
             if not install then return show(ConfirmBox:new{text=_("Uninstall selected sources? Library and downloads remain."),ok_text=_("Uninstall"),ok_callback=function() self:applyMassSources(repo,entries,selected,false); self:showRepositorySources(repo) end}) end
             self:applyMassSources(repo,entries,selected,true); self:showRepositorySources(repo)
@@ -989,10 +1202,12 @@ function MaruManga:applyMassSources(repo,entries,selected,install)
 end
 function MaruManga:installCatalogSource(repo,entry)
     if entry.id=="mangadex" or entry.adapter=="mangadex" then return self:notice(_("MangaDex is no longer available")) end
+    local compatibility=sourceCompatibilityIssue(entry)
+    if compatibility then self:notice(_("Cannot install this source: ")..compatibility); return false end
     local existing=self:profile(entry.id)
     local origin=repo.url or "builtin"
     if existing and existing.repository_url~=origin then return self:notice(_("A source with this ID is already installed")) end
-    local profile={id=entry.id,name=entry.name,base_url=entry.base_url,kind=entry.adapter,languages=entry.languages,enabled=not existing or existing.enabled~=false,repository_url=origin,repository_version=entry.version}
+    local profile={id=entry.id,name=entry.name,base_url=entry.base_url,icon_url=entry.icon_url,kind=entry.adapter,languages=entry.languages,enabled=not existing or existing.enabled~=false,repository_url=origin,repository_version=entry.version}
     for k,v in pairs(entry.profile or {}) do profile[k]=v end
     if existing then
         local index; for i,value in ipairs(self.config.data.profiles) do if value==existing then index=i; break end end
@@ -1003,6 +1218,37 @@ function MaruManga:installCatalogSource(repo,entry)
         ok,err=self.config:save(); if not ok then table.remove(self.config.data.profiles); return self:notice(err) end
     end
     self.manga_sources=nil; return true
+end
+function MaruManga:installDefaultCatalogSources()
+    if not self.config or not self.repositories then return false end
+    local default_repo
+    for _,repo in ipairs(self.repositories:list()) do if repo.builtin then default_repo=repo; break end end
+    if not default_repo or type(default_repo.catalog)~="table" then return false end
+    local installed_before={}
+    for _,id in ipairs(self.config.data.auto_installed_source_ids or {}) do installed_before[id]=true end
+    local changed=false
+    for _,entry in ipairs(repositorySources(default_repo)) do
+        if not installed_before[entry.id] then
+            local profile=self:profile(entry.id)
+            if profile or not sourceCompatibilityIssue(entry) then
+                if not profile then
+                    local ok=self:installCatalogSource(default_repo,entry)
+                    if not ok then return false end
+                    profile=self:profile(entry.id)
+                    if profile and entry.nsfw then profile.enabled=false end
+                end
+                self.config.data.auto_installed_source_ids[#self.config.data.auto_installed_source_ids+1]=entry.id
+                installed_before[entry.id]=true
+                changed=true
+            end
+        end
+    end
+    if changed then
+        table.sort(self.config.data.auto_installed_source_ids)
+        local ok,err=self.config:save()
+        if not ok then return nil,err end
+    end
+    return true
 end
 function MaruManga:sourceCatalogs()
     local catalogs=self.repositories:list(); local represented={}; local installed_by_id={}
@@ -1054,7 +1300,7 @@ function MaruManga:sourceManager(query,filter)
                 if entry.id=="mangadex" and entry.version>1 then status=_("Plugin update required") end
                 if repo.unreachable then status=_("Not reachable") end
                 if conflict then status=_("ID conflict") end
-                if not repo.unreachable and type(installed)=="table" and installed.repository_url==origin and (installed.repository_version or 0)<entry.version then status=_("Update available") end
+                if not repo.unreachable and type(installed)=="table" and installed.repository_url==origin and Repositories.versionLess(installed.repository_version or 0,entry.version) then status=_("Update available") end
                 if entry.name:lower():find(query,1,true) then items[#items+1]={text=entry.name .. " · " .. status,action=function()
                     local choices={}; local detail_menu
                     local function refreshed(message)
@@ -1064,7 +1310,7 @@ function MaruManga:sourceManager(query,filter)
                         self:notice(message)
                     end
                     if conflict then return self:notice(_("Another source already uses this ID")) end
-                    if not installed or (type(installed)=="table" and installed.repository_url==origin and (installed.repository_version or 0)<entry.version) then
+                    if not installed or (type(installed)=="table" and installed.repository_url==origin and Repositories.versionLess(installed.repository_version or 0,entry.version)) then
                         choices[#choices+1]={text=installed and _("Update") or _("Install"),action=function() if self:installCatalogSource(repo,entry) then refreshed(_("Source installed")) end end}
                     end
                     if entry.id=="mangadex" and installed then
@@ -1431,7 +1677,14 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
                         self:notice(ok and _("Incomplete files removed") or err)
                     end})
                 end}
-            elseif current.status=="queued" or current.status=="running" or current.status=="paused" then
+            elseif current.status=="paused" or (current.status=="running" and current.pause_requested) then
+                choices[#choices+1]={text=_("Continue"),icon=path.."images/menu/next-page.svg",action=function()
+                    local ok,err=self.downloads:resume(current)
+                    self:notice(ok and _("Download resumed") or err)
+                    self:showMangaDownloads(source_id,manga_id,page,true)
+                end}
+                choices[#choices+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() local ok,err=self.downloads:cancel(current); self:notice(ok and _("Cancellation requested") or err); self:showMangaDownloads(source_id,manga_id,page,true) end}
+            elseif current.status=="queued" or current.status=="running" then
                 choices[#choices+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() local ok,err=self.downloads:cancel(current); self:notice(ok and _("Cancellation requested") or err); self:showMangaDownloads(source_id,manga_id,page,true) end}
             elseif current.status=="completed" then
                 choices[#choices+1]={text=_("Open downloaded file"),icon=path.."images/menu/book.svg",action=function() self:openDownloaded(current.manga,current.chapter) end}
@@ -1755,23 +2008,115 @@ function MaruManga:checkPluginUpdates()
         end
     end)
 end
-function MaruManga:openDiscover(source_id)
-    local sources={}
-    for _,profile in ipairs(self.config.data.profiles or {}) do if profile.enabled~=false then sources[#sources+1]={id=profile.id,name=profile.name or profile.id} end end
-    if #sources==0 then return self:notice(_("No enabled sources are installed")) end
-    if not source_id and #sources>1 then
-        local choices={}
-        for _,entry in ipairs(sources) do
-            local source=entry
-            choices[#choices+1]={text=source.name,action=function() self:openDiscover(source.id) end}
+function MaruManga:manageDiscoverSources()
+    if not self.config then return self:notice(self.config_error) end
+    local installed=self.config.data.profiles or {}
+    if #installed==0 then return self:notice(_("No installed sources")) end
+    local drafts={}
+    for _,profile in ipairs(installed) do drafts[profile.id]=profile.enabled~=false end
+    local page_size=10
+    local page_count=math.max(1,math.ceil(#installed/page_size))
+    local function finish(save)
+        if save then
+        local previous={}
+        local enabled_count=0
+        for _,profile in ipairs(installed) do
+            previous[profile]=profile.enabled
+            profile.enabled=drafts[profile.id]==true
+            if profile.enabled then enabled_count=enabled_count+1 end
         end
-        return self:menu(_("Discover · Sources"),choices)
+        local old_source=self.config.data.source
+        if old_source then
+            local current=self:profile(old_source)
+            if current and current.enabled==false then
+                self.config.data.source=nil
+                for _,profile in ipairs(installed) do if profile.enabled then self.config.data.source=profile.id; break end end
+            end
+        end
+        local ok,err=self.config:save()
+        if not ok then
+            for profile,enabled in pairs(previous) do profile.enabled=enabled end
+            self.config.data.source=old_source
+            return self:notice(err or _("Could not save source settings"))
+        end
+        self.manga_sources=nil
+        self:notice(enabled_count==0 and _("No sources are enabled") or _("Source settings saved"))
     end
-    source_id=source_id or sources[1].id
+        if self.panel_enabled and self.main_menu then self.main_menu:goBack() else self:openDiscover() end
+    end
+    local function render(page,replace_page)
+        page=math.max(1,math.min(page_count,tonumber(page) or 1))
+        local items={}
+        local first=(page-1)*page_size+1
+        local last=math.min(#installed,page*page_size)
+        for index=first,last do
+            local profile=installed[index]
+            items[#items+1]={text=(profile.name or profile.id).."  ("..profile.id..")",icon=path.."images/menu/"..(drafts[profile.id] and "check-on" or "check-off")..".svg",action=function()
+                drafts[profile.id]=not drafts[profile.id]
+                render(page,true)
+            end}
+        end
+        if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/back.svg",action=function() render(page-1,true) end} end
+        if page<page_count then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next.svg",action=function() render(page+1,true) end} end
+        items[#items+1]={text=_("Save"),icon=path.."images/menu/save.svg",group_end=true,action=function() finish(true) end}
+        items[#items+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() finish(false) end}
+        self:menu(_("Manage Sources · Page ")..page.." / "..page_count,items,nil,false,replace_page,{page_limit=page_size+4})
+    end
+    render(1,false)
+end
+function MaruManga:withDiscoverSource(label,callback,all_callback,replace_page)
+    local sources={}
+    for _,profile in ipairs(self.config.data.profiles or {}) do
+        if profile.enabled~=false then sources[#sources+1]=profile end
+    end
+    if #sources==0 then return self:notice(_("No enabled sources are installed. Use Manage Sources to enable one.")) end
+    local choices,icons_to_load={},{}
+    if all_callback then choices[#choices+1]={text=_("All Manga"),action=all_callback} end
+    if #sources==1 and not all_callback then return callback(sources[1].id) end
+    for _,entry in ipairs(sources) do
+        local source=entry
+        local row={text=source.name or source.id,action=function() callback(source.id) end}
+        local icon_file=bundledSourceIcon(source) or self:findCachedSourceIcon(source)
+        if icon_file then
+            local Screen=require("device").screen
+            local ImageWidget=require("ui/widget/imagewidget")
+            local ok,widget=pcall(ImageWidget.new,ImageWidget,{file=icon_file,width=Screen:scaleBySize(34),height=Screen:scaleBySize(34),alpha=true,scale_factor=0})
+            if ok then row.state=widget end
+        elseif sourceIconUrl(source) then
+            icons_to_load[#icons_to_load+1]=source
+        end
+        choices[#choices+1]=row
+    end
+    local title=label.." · ".._("Sources")
+    local menu=self:menu(title,choices,nil,false,replace_page)
+    if #icons_to_load>0 then
+        local remaining,loaded=#icons_to_load,false
+        local function on_icon(file)
+            if file then loaded=true end
+            remaining=remaining-1
+            if remaining~=0 or not loaded then return end
+            UIManager:nextTick(function()
+                if self.panel_enabled and self.main_menu and self.main_menu.current_page and self.main_menu.current_page.title==title then
+                    self:withDiscoverSource(label,callback,all_callback,true)
+                elseif UIManager.isWidgetShown and UIManager:isWidgetShown(menu) then
+                    UIManager:close(menu)
+                    self:withDiscoverSource(label,callback,all_callback)
+                end
+            end)
+        end
+        for _,entry in ipairs(icons_to_load) do self:cacheSourceIcon(entry,on_icon) end
+    end
+end
+function MaruManga:openDiscover(source_id)
+    local function choose(label,callback,all_callback)
+        if source_id then return callback(source_id) end
+        return self:withDiscoverSource(label,callback,all_callback)
+    end
     self:menu(_("Discover"),{
-        {text=_("Search"),action=function() self:search(source_id) end},
-        {text=_("Popular"),action=function() local source=self:source(source_id); if source then self:loadList(_("Popular"),function(p,cb) source:getPopularManga(p,cb) end,function(m) return m.title end) end end},
-        {text=_("Latest updates"),action=function() local source=self:source(source_id); if source then self:loadList(_("Latest updates"),function(p,cb) source:getLatestUpdates(p,cb) end,function(m) return m.title end) end end},
+        {text=_("Search"),action=function() choose(_("Search"),function(id) self:search(id) end,function() self:search(nil) end) end},
+        {text=_("Popular"),action=function() choose(_("Popular"),function(id) local source=self:source(id); if source then self:loadList(_("Popular"),function(p,cb) source:getPopularManga(p,cb) end,function(m) return m.title end) end end) end},
+        {text=_("Latest updates"),action=function() choose(_("Latest updates"),function(id) local source=self:source(id); if source then self:loadList(_("Latest updates"),function(p,cb) source:getLatestUpdates(p,cb) end,function(m) return m.title end) end end) end},
+        {text=_("Manage Sources"),maru_icon="source",group_end=true,action=function() self:manageDiscoverSources() end},
     })
 end
 function MaruManga:open()

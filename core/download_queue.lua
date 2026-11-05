@@ -15,6 +15,10 @@ function Queue.open(settings,start,max_concurrent)
         item.pause_requested=nil; item.resume_after_pause=nil; item.cancel_requested=nil
         -- Old versions queued online-reader actions; downloads no longer open automatically.
         item.open_after=nil
+        if item.manga.source_id=="mangago" and type(item.manga.url)=="string" and item.manga.url:match("^https://mangamost%.com/") then
+            item.manga.source_id="mangamost"
+            if item.chapter.source_id=="mangago" then item.chapter.source_id="mangamost" end
+        end
     end
     return setmetatable({settings=settings,start=start,state=state,max_concurrent=max_concurrent or function() return 2 end,active_items={},controllers={},pumping=false},Queue)
 end
@@ -143,6 +147,21 @@ function Queue:resumeManga(source_id,manga_id)
     end
     if count>0 then self:save(); self:run() end
     return count
+end
+function Queue:resume(item)
+    if type(item)~="table" then return nil,"Download not found" end
+    if item.status=="paused" then
+        local previous_error=item.error
+        item.status="queued"; item.error=nil; item.pause_requested=nil; item.resume_after_pause=nil
+        if not self:save() then item.status="paused"; item.error=previous_error; return nil,"Could not save queue" end
+        self:run(); return true
+    end
+    if item.status=="running" and item.pause_requested then
+        item.resume_after_pause=true
+        if not self:save() then item.resume_after_pause=nil; return nil,"Could not save queue" end
+        return true
+    end
+    return nil,"Download is not paused"
 end
 function Queue:cancelManga(source_id,manga_id)
     local count,controllers=0,{}

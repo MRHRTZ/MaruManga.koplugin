@@ -9,6 +9,11 @@ assert(not s:record(m,c,0)); assert(s:remove("mangadex","1")); assert(#s:list()=
 assert(not Store.open({readSetting=function() return {version=2} end}))
 local legacy=assert(Store.open({readSetting=function() return {version=1,manga={},history={},archives={},chapters={}} end}))
 assert(type(legacy.data.chapter_sync)=="table")
+local renamed=assert(Store.open({readSetting=function() return {version=1,manga={['mangago:8']={id="8",source_id="mangago",title="Legacy",url="https://mangamost.com/comics/8"}},history={{key="mangago:8",manga_id="8",source_id="mangago"}},archives={['/books/8.cbz']={manga={id="8",source_id="mangago"},chapters={{id="96",source_id="mangago"}}}},chapters={['mangago:96']={metadata={manga_id="8"}}},chapter_sync={['mangago:8']={count=1}}} end}))
+assert(renamed.data.manga["mangamost:8"].source_id=="mangamost" and renamed.data.manga["mangago:8"]==nil)
+assert(renamed.data.history[1].source_id=="mangamost" and renamed.data.history[1].key=="mangamost:8")
+assert(renamed.data.archives["/books/8.cbz"].manga.source_id=="mangamost" and renamed.data.archives["/books/8.cbz"].chapters[1].source_id=="mangamost")
+assert(renamed.data.chapters["mangamost:96"] and renamed.data.chapter_sync["mangamost:8"])
 print("Library persistence tests passed")
 
 assert(s:linkArchive("/tmp/a.cbz",m,c)); assert(s:recordArchivePage("/tmp/a.cbz",7)); assert(s.data.history[1].page==7)

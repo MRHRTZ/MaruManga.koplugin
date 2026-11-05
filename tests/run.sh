@@ -15,7 +15,7 @@ LUA_PATH="$lua_path"
 export LUA_PATH
 for test_file in tests/test_*.lua; do
     case "$test_file" in
-        tests/test_file_digest.lua|tests/test_generic_parser.lua|tests/test_generic_source.lua|tests/test_komiku_source.lua|tests/test_madara_parser.lua|tests/test_plugin_integration.lua)
+        tests/test_file_digest.lua|tests/test_generic_parser.lua|tests/test_generic_source.lua|tests/test_komiku_source.lua|tests/test_mangago_source.lua|tests/test_mangarock_source.lua|tests/test_madara_parser.lua|tests/test_plugin_integration.lua|tests/test_mangadex_parser.lua|tests/test_mangadex_source.lua)
             if [ -z "${KOREADER_BASE:-}" ]; then
                 printf 'SKIP %s (set KOREADER_BASE to a KOReader source tree)\n' "$test_file"
                 continue

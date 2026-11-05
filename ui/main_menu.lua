@@ -10,6 +10,7 @@ local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local RightContainer = require("ui/widget/container/rightcontainer")
 local TextWidget = require("ui/widget/textwidget")
+local TextBoxWidget = require("ui/widget/textboxwidget")
 local ScrollTextWidget = require("ui/widget/scrolltextwidget")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local UnderlineContainer = require("ui/widget/container/underlinecontainer")
@@ -28,11 +29,6 @@ function MainRow:init()
     local row_height = Screen:scaleBySize(self.row_height or 62)
     local icon_size = Screen:scaleBySize(34)
     local leading_width = (self.key or self.no_icon) and 0 or (self.state_width or icon_size)
-    self.dimen = Geom:new{x=0,y=0,w=width,h=row_height}
-    self.ges_events = { TapSelect = { GestureRange:new{ges="tap",range=self.dimen} } }
-    if self.hold_callback then
-        self.ges_events.HoldSelect={GestureRange:new{ges="hold",range=self.dimen}}
-    end
     local state=self.state
     if not state and self.image then
         local ok,image=pcall(ImageWidget.new,ImageWidget,{file=self.image,width=Screen:scaleBySize(42),height=Screen:scaleBySize(58),alpha=true,scale_factor=0})
@@ -45,26 +41,35 @@ function MainRow:init()
         trailing_width=Screen:scaleBySize(28)
         trailing=CenterContainer:new{dimen=Geom:new{w=trailing_width,h=row_height},ImageWidget:new{file=self.trailing_icon,width=Screen:scaleBySize(24),height=Screen:scaleBySize(24),alpha=true}}
     end
-    local label_width=width-leading_width-trailing_width-4*Size.padding.large
+    local label_width=math.max(Screen:scaleBySize(80),width-leading_width-trailing_width-4*Size.padding.large-Screen:scaleBySize(16))
     local label
     if self.key then
         local key_width=math.min(Screen:scaleBySize(124),math.floor(width*0.34))
+        local value_width=math.max(Screen:scaleBySize(80),width-key_width-Screen:scaleBySize(46))
+        local value_widget=TextBoxWidget:new{text=self.value or "",face=Font:getFace("infofont",18),width=value_width,padding=0}
+        row_height=math.max(row_height,value_widget:getSize().h+Screen:scaleBySize(12))
         label=HorizontalGroup:new{
             align="center",
             TextWidget:new{text=self.key,face=Font:getFace("infofont",18),max_width=key_width,bold=true},
             HorizontalSpan:new{width=Screen:scaleBySize(10)},
-            TextWidget:new{text=self.value or "",face=Font:getFace("infofont",18),max_width=width-key_width-Screen:scaleBySize(30)},
+            value_widget,
         }
     elseif self.title then
+        local title_widget=TextBoxWidget:new{text=self.title,face=Font:getFace("infofont",22),width=label_width,padding=0,bold=true}
+        row_height=math.max(row_height,title_widget:getSize().h+Screen:scaleBySize(48))
         label=VerticalGroup:new{
             align="left",
-            TextWidget:new{text=self.title,face=Font:getFace("infofont",22),max_width=label_width,bold=true},
+            title_widget,
             TextWidget:new{text=self.meta or "",face=Font:getFace("infofont",18),max_width=label_width},
             TextWidget:new{text=self.progress or "",face=Font:getFace("infofont",18),max_width=label_width,bold=true},
         }
     else
-        label=TextWidget:new{text=self.text,face=Font:getFace("infofont",24),max_width=label_width}
+        label=TextBoxWidget:new{text=self.text or "",face=Font:getFace("infofont",24),width=label_width,padding=0}
+        row_height=math.max(row_height,label:getSize().h+Screen:scaleBySize(12))
     end
+    self.dimen = Geom:new{x=0,y=0,w=width,h=row_height}
+    self.ges_events = { TapSelect = { GestureRange:new{ges="tap",range=self.dimen} } }
+    if self.hold_callback then self.ges_events.HoldSelect={GestureRange:new{ges="hold",range=self.dimen}} end
     local group={align="center"}
     if not self.key and not self.no_icon then
         group[#group+1]=HorizontalSpan:new{width=Size.padding.large}
@@ -225,7 +230,10 @@ function M.new(options)
             dialog:onClose()
         end}
         local title_text=page.page_title and (page.page_title.." · Page "..page_index.." / "..page_count) or page.title or "MaruManga Downloader"
-        local title=TextWidget:new{text=title_text,face=Font:getFace("tfont",24),max_width=inner_width-Screen:scaleBySize(112)}
+        local left_reserved=page.backable and Screen:scaleBySize(56) or Screen:scaleBySize(12)
+        local right_reserved=page.header_action and Screen:scaleBySize(108) or Screen:scaleBySize(56)
+        local title_width=math.max(Screen:scaleBySize(120),inner_width-2*math.max(left_reserved,right_reserved))
+        local title=TextWidget:new{text=title_text,face=Font:getFace("tfont",24),max_width=title_width}
         local header={
             dimen=Geom:new{w=inner_width,h=Screen:scaleBySize(56)},
             CenterContainer:new{dimen=Geom:new{w=inner_width,h=Screen:scaleBySize(56)},title},
@@ -266,9 +274,17 @@ function M.new(options)
                 dimen=Geom:new{w=inner_width,h=Screen:scaleBySize(30)},
                 TextWidget:new{text=require("gettext")("Description"),face=Font:getFace("infofont",18),bold=true,max_width=inner_width-Screen:scaleBySize(20)},
             }
+            local description_width=inner_width-Screen:scaleBySize(16)
+            local description_face=Font:getFace("infofont",18)
+            local measured=TextBoxWidget:new{text=page.description,face=description_face,width=description_width,padding=0}
+            local natural_height=measured:getSize().h
+            local description_height=math.min(natural_height,Screen:scaleBySize(152))
+            local description_widget=natural_height>description_height and ScrollTextWidget:new{
+                text=page.description,face=description_face,width=description_width,height=description_height,scroll_by_pan=true,
+            } or measured
             rows[#rows+1]=LeftContainer:new{
-                dimen=Geom:new{w=inner_width,h=Screen:scaleBySize(152)},
-                ScrollTextWidget:new{text=page.description,face=Font:getFace("infofont",18),width=inner_width-Screen:scaleBySize(16),height=Screen:scaleBySize(144),scroll_by_pan=true},
+                dimen=Geom:new{w=inner_width,h=description_height+Screen:scaleBySize(6)},
+                description_widget,
             }
         end
         if page.grid then

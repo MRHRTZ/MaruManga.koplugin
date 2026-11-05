@@ -19,12 +19,13 @@ For Android, the plugin directory is normally under KOReader's application data.
 
 ## How to use
 
-1. Open **Repositories** and refresh the default repository catalog. Install and enable **Komiku** if it is not already available. The default catalog is `https://raw.githubusercontent.com/MRHRTZ/maru-manga-repository/master/metadata.json`.
-2. Open **Discover**, choose Search, Popular, or Latest updates, and open a manga card.
-3. On the manga details page choose **Add to Library**.
-4. Choose **Download All Chapters** to queue all missing chapters, or open **Chapters** and download selected chapters. Chapters merge into a single `manga.cbz` for that title. Downloads can be monitored, refreshed, paused, continued, or cancelled from **Downloads**.
-5. Open **Library > Browse library**, select a title, then choose **Read Manga** to open its local CBZ in KOReader. The plugin blocks opening while that archive is being modified.
-6. Use **Library > Check Updates** to compare bookmarked titles with their source. Already downloaded chapters are excluded from the new chapter count and can be queued for download.
+1. The bundled Maru Manga catalog is installed by default, including compatible sources such as Komiku, MangaRock, MangaMost, Mangago, and WEBTOON. Refresh **Repositories** to check for catalog updates. NSFW sources are installed disabled.
+2. Open **Discover > Manage Sources**, check the sources to enable, then choose **Save**. Search, Popular, and Latest updates only offer enabled sources. Other configured repositories can provide additional compatible generic profiles.
+3. Open **Discover**, choose Search, Popular, or Latest updates, and open a manga card.
+4. On the manga details page choose **Add to Library**.
+5. Choose **Download All Chapters** to queue all missing chapters, or open **Chapters** and download selected chapters. Chapters merge into a single `manga.cbz` for that title. Downloads can be monitored, refreshed, paused, continued, or cancelled from **Downloads**.
+6. Open **Library > Browse library**, select a title, then choose **Read Manga** to open its local CBZ in KOReader. The plugin blocks opening while that archive is being modified.
+7. Use **Library > Check Updates** to compare bookmarked titles with their source. Already downloaded chapters are excluded from the new chapter count and can be queued for download.
 
 | Main menu | Popular manga |
 | --- | --- |
@@ -40,7 +41,7 @@ For Android, the plugin directory is normally under KOReader's application data.
 
 ## Repository sources
 
-Source catalog data is maintained in [maru-manga-repository](https://github.com/MRHRTZ/maru-manga-repository). The plugin bundles reviewed source adapters; repository catalogs do not deliver or execute Lua code. Komiku is the active source. MangaRock and Mangago are listed as planned entries only. Mangago is marked NSFW. Source language and content tags are shown in repository management.
+Source catalog data is maintained in [maru-manga-repository](https://github.com/MRHRTZ/maru-manga-repository). The plugin bundles reviewed source adapters; repository catalogs do not deliver or execute Lua code. Compatible server-rendered websites can use the shared generic adapter by providing URL patterns and selectors in catalog metadata. Incomplete or unsupported profiles are identified before install. JavaScript-rendered pages, dynamic tokens, authentication, and access restrictions remain unsupported. See [source compatibility](docs/SOURCE_COMPATIBILITY.md) for details. Source language and content tags are shown in repository management.
 
 ## Project docs
 

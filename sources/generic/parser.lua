@@ -68,6 +68,17 @@ function Parser.new(html,resolve,clean,profile,digest)
                         end
                     end
                 end
+                local latest_label=(type(profile.latest_label)=="string" and profile.latest_label or ""):lower()
+                if profile.latest_selector or profile.latest_selectors then
+                    for _,latest_node in ipairs(all_profile(node,profile.latest_selector,profile.latest_selectors)) do
+                        local spans=all(latest_node,"span")
+                        local label=#spans>1 and text(spans[1],clean):lower() or ""
+                        if latest_label=="" or label:find(latest_label,1,true) then
+                            local value=#spans>1 and text(spans[#spans],clean) or text(latest_node,clean)
+                            if value~="" then item.latest_chapter=value; break end
+                        end
+                    end
+                end
                 items[#items+1]=item
             end
         end

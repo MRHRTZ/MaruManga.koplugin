@@ -1,39 +1,17 @@
-# Repository and source development
+# Source adapters
 
-## Catalogs
+Repository entries are configuration only. Compatible catalog sources are installed as profiles; the plugin never executes source code fetched from a repository. Any number of compatible source profiles can use the shared generic adapter, subject to repository/catalog size limits.
 
-The catalog repository root `metadata.json` defines a versioned repository with `id`, `name`, `author`, `version`, `status`, and a `sources` array. Each source declares an ID, name, per-source version, adapter, and optional languages and NSFW marker. Status values OK, Maintenance, and Error are recognized labels; unknown owner-supplied text is preserved and shown as Unknown by the UI.
+Catalog entries may include an HTTPS `icon_url`. Same-site icon URLs are supported; the bundled catalog uses a 64-pixel favicon URL scoped to each source domain. The plugin includes the six current website favicons locally for immediate display and validates/caches metadata icons for other sources. Missing or unavailable icons fall back to the standard source row icon.
 
-The catalog URL must be HTTPS. Catalog IDs are stable and versions cannot move backwards. Per-repository source counts are calculated from catalog metadata and local installed profiles.
+- `komiku`: Indonesian public catalog and chapter pages.
+- `mangarock`: public MangaRock search, popular, latest, title, chapters and direct image pages.
+- `mangamost`: the MangaMost JSON API identified in package `baca.read.komik.manga`.
+- `mangago`: public `www.mangago.zone` HTML source; NSFW. Search uses `/r/l_search/`, popular uses `/topmanga/`, and work pages expose `#information` and `#chapter_table`. Chapter image URLs are decoded from the AES-encrypted page manifest. Certificate validation is skipped only for this exact source, while HTTPS and exact host allowlists remain enforced. Live pages and all six decoded image URLs were fetched; representative tall images were visually checked as continuous images without shuffled tiles.
+- `webtoon`: public server-rendered English WEBTOON pages; the adapter does not run JavaScript.
+- `webtoon_id`: public server-rendered Indonesian WEBTOON pages; the adapter handles Indonesian `/id/` title and `ep-…/viewer` routes, including episode numbers in the `episode_no` query parameter.
+- `westmanga`: public Indonesian catalog at `www.westmanga.shop`. Search, popular, latest and paginated chapter lists use its JSON endpoint; title metadata and page images come from server-rendered pages. Chapter images use the exact `proxy.westmanga.shop` host and covers use `cdn.westmanga.shop`. The older `westmanga.site` landing page currently links to separate v1 mirrors.
 
-The default Maru repository catalog is version 1.13.0 and includes Komiku adapter version 1. Refresh the catalog after installation to discover it.
+The shared `generic` adapter supports complete declarative profiles for search/popular/latest URL patterns, result list selectors, manga metadata, chapter rows, image selectors, and ordinary page pagination. Additional repositories can add compatible IDs without a plugin code change. This does not mean arbitrary sites can be supported without limits: JavaScript execution, custom API signing, authenticated access, arbitrary AJAX chapter pagination, encrypted manifests and anti-bot challenges are not expressed by the current profile schema. Those require a reviewed bundled adapter and plugin release. Incomplete profiles are rejected rather than installed as functional sources.
 
-Use `adapter: "planned"` only for a source entry that is intentionally not installable yet. Planned sources are shown with language/NSFW tags and an unavailable-adapter note; they must not pretend to work. MangaRock and Mangago are planned catalog entries at this stage.
-
-## Bundled adapters
-
-The plugin executes only adapter code shipped under `sources/`. Komiku is the only source currently exposed for live requests. MangaDex was removed from the source repository and is blocked before network setup; its old plugin code remains only for offline parser and fixture tests. Madara and generic HTML adapters remain configurable for later testing. To add an adapter:
-
-1. Define model and callback behavior independent of UI.
-2. Parse fixture responses without a live website.
-3. Add an explicit adapter allowlist and validated declarative profile schema.
-4. Use the shared HTTPS transport, request timeout/retry behavior, and exact host allowlists.
-5. Restrict redirects, image hosts, response sizes, selectors, and filenames.
-6. Add mocked tests for malformed input, empty pages and HTTP errors.
-7. Update `SOURCE_COMPATIBILITY.md`, attribution/license data, and the root repository catalog.
-
-Never evaluate Lua, Kotlin, JavaScript, or scripts downloaded from a repository. A catalog entry cannot widen the plugin's network host allowlist arbitrarily. Do not bypass anti-bot controls, authentication, paywalls, DRM, or access restrictions.
-
-## Komiku support
-
-Komiku uses `api.komiku.org` for list/search HTML and `komiku.org` for manga details, chapters, and pages. Image requests are limited to a fixed allowlist. Requests send an Indonesian `Accept-Language` header; page images include the chapter referer. List, detail, and page-list requests are serialized at two requests per second and use the shared retry policy. Image downloads use the app's configured download concurrency. Catalog metadata cannot override the Komiku API/base origins or add arbitrary image hosts. JavaScript execution, dynamic challenges, authentication, and access-control bypass are unsupported.
-
-This port selectively adapts public behavior from Keiyoushi's Komiku extension, under Apache-2.0. See `ATTRIBUTION.md`, `third_party/keiyoushi/LICENSE`, and the mirror in `maru-manga-repository/komiku/`. The plugin executes only its bundled Lua adapter.
-
-## Language and NSFW tags
-
-Use ISO-like lowercase language tags supported by the source, e.g. `id`, `en`, `ja`; use `multi` only when a source genuinely spans languages. A source supporting several languages may list several. Set `nsfw: true` only when its catalog entry may expose adult content. The UI must preserve the marker and display it in the repository source row and detail.
-
-## Repository maintenance
-
-Increase the catalog semantic version on any published metadata change and increment a source's integer version when its profile or behavior changes. Keep entry IDs stable. Test the JSON against `core/repositories.lua` before publishing. Keep author and source licenses in the repository's attribution files.
+Catalog and per-source metadata use semantic `MAJOR.MINOR.PATCH` versions. Strict validation still accepts old integer versions for compatibility with installed catalogs.

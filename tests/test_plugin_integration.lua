@@ -5,15 +5,25 @@ local store={file=settings_file,data={},backup=function() return false end,readS
 local widgets={}
 package.preload["ui/widget/container/widgetcontainer"]=function() return {extend=function(_,v) return v end} end
 package.preload["ui/uimanager"]=function() return {show=function(_,w) widgets[#widgets+1]=w end,close=function() end,nextTick=function(_,f) f() end,scheduleIn=function() end,isWidgetShown=function() return true end,getTopmostVisibleWidget=function() return widgets[#widgets] end,setDirty=function() end} end
-for _,name in ipairs({"ui/widget/infomessage","ui/widget/buttondialog","ui/widget/trapwidget","ui/widget/confirmbox","ui/widget/menu","ui/widget/inputdialog","ui/widget/multiinputdialog"}) do
+for _,name in ipairs({"ui/widget/infomessage","ui/widget/buttondialog","ui/widget/trapwidget","ui/widget/confirmbox","ui/widget/menu","ui/widget/inputdialog"}) do
     package.preload[name]=function() return {new=function(_,v) return v end} end
 end
+package.preload["ui/widget/multiinputdialog"]=function() return {new=function(_,v)
+    v.added={}; function v:addWidget(widget) self.added[#self.added+1]=widget end
+    function v:getFields() local result={}; for i,field in ipairs(self.fields or {}) do result[i]=field.text end; return result end
+    return v
+end} end
+package.preload["ui/widget/checkbutton"]=function() return {new=function(_,v) return v end} end
 package.preload["ui/widget/inputdialog"]=function() return {new=function(_,v) v.onShowKeyboard=function() end; return v end} end
 package.preload["ui/widget/titlebar"]=function() return {new=function(_,v) return v end} end
 local function simple_widget() return {new=function(_,v) return v or {} end} end
 for _,name in ipairs({"ui/widget/container/centercontainer","ui/widget/container/framecontainer","ui/widget/horizontalgroup","ui/widget/horizontalspan","ui/widget/imagewidget","ui/widget/container/leftcontainer","ui/widget/overlapgroup","ui/widget/container/rightcontainer","ui/widget/textwidget","ui/widget/scrolltextwidget","ui/widget/verticalgroup","ui/widget/container/underlinecontainer","ui/geometry","ui/gesturerange"}) do
     package.preload[name]=simple_widget
 end
+package.preload["ui/widget/textboxwidget"]=function() return {new=function(_,options)
+    local lines=math.max(1,math.ceil(#(options.text or "")/40))
+    return {getSize=function() return {h=lines*22,w=options.width} end}
+end} end
 package.preload["ui/font"]=function() return {getFace=function(_,name,size) return {name=name,size=size} end} end
 package.preload["ui/size"]=function() return {padding={large=8,button=8},margin={title=8},border={window=2},line={medium=1,focus_row=2}} end
 package.preload["ffi/blitbuffer"]=function() return {COLOR_DARK_GRAY=1,COLOR_WHITE=2,COLOR_BLACK=3} end
@@ -63,29 +73,105 @@ local plugin=dofile("./main.lua")
 local registered=false
 plugin.ui={menu={registerToMainMenu=function(_,p) registered=p==plugin end}}; plugin:init(); plugin.default_refresh_started=true
 local menu={}; plugin:addToMainMenu(menu); assert(registered and menu.marumanga and menu.marumanga.sorting_hint=="tools" and plugin.config.data.source=="komiku")
+local bundled_repo; for _,candidate in ipairs(plugin.repositories:list()) do if candidate.builtin then bundled_repo=candidate end end
+assert(bundled_repo and #plugin.config.data.auto_installed_source_ids>=4)
+assert(plugin:profile("komiku").repository_url==bundled_repo.url)
+for _,catalog in ipairs(plugin:sourceCatalogs()) do
+    if catalog.local_profiles then
+        for _,source in ipairs(catalog.catalog.sources) do assert(source.id~="komiku") end
+    end
+end
+for _,entry in ipairs(bundled_repo.catalog.sources) do if entry.adapter~="planned" and entry.adapter~="mangadex" then assert(plugin:profile(entry.id)) end end
+local default_profile_count=#plugin.config.data.profiles; assert(plugin:installDefaultCatalogSources() and #plugin.config.data.profiles==default_profile_count)
+assert(plugin:profile("mangago") and plugin:profile("mangago").enabled==false)
 local real_refresh=plugin.refreshRepository; local auto_refresh=false
 plugin.default_refresh_started=nil; plugin.refreshRepository=function(_,repo,options) assert(repo.url:find("raw.githubusercontent.com",1,true)); auto_refresh=true; options.callback(true) end
 plugin:showRepositories(); assert(widgets[#widgets].title=="Repositories")
 plugin.repositories.data.default_repository.unreachable=nil; plugin.repositories.data.default_repository.last_error=nil; plugin.refreshRepository=real_refresh
-assert(plugin.config:addProfile({id="example",name="Example",base_url="https://example.org",kind="madara"}))
+assert(plugin.config:addProfile({id="example",name="Example",base_url="https://example.org",kind="generic",search_path="/?q={query}&page={page}",popular_path="/popular?page={page}",latest_path="/latest?page={page}",list_selector="article",list_link_selector="a",list_title_selector="span",list_cover_selector="img",title_selector="h1",description_selector=".summary__content",chapter_selector="li.chapter a",page_selector=".reader img"}))
 plugin.config.data.source="example"
 local source=assert(plugin:source()); assert(source:getName()=="Example" and source:getId()=="example")
 plugin:showSources(); assert(#widgets>0 and widgets[#widgets].title=="Sources")
 source.transport.get=function(_,url,cb)
-    if url:find("post_type",1,true) then cb('<div class="page-item-detail"><div class="item-thumb"><a href="/manga/a">Cover</a></div><div class="post-title"><a>Series</a></div></div>')
-    else cb('<div class="post-title"><h1>Series</h1></div><div class="summary__content">Description</div><li class="wp-manga-chapter"><a href="/chapter/1">Chapter 1</a></li>') end
+    if url:find("?q=",1,true) then cb('<article><a href="/manga/a"><img src="/cover.jpg"><span>Series</span></a></article>')
+    else cb('<h1>Series</h1><div class="summary__content">Description</div><li class="chapter"><a href="/chapter/1">Chapter 1</a></li>') end
 end
-plugin:openDiscover(); local source_picker=widgets[#widgets]; assert(source_picker.title=="Discover · Sources" and #source_picker.item_table>=2)
+plugin:openDiscover(); local discover=widgets[#widgets]; assert(discover.title=="Discover" and #discover.item_table==4)
+local manage_item=discover.item_table[4]; assert(manage_item.text=="Manage Sources" and manage_item.group_end); manage_item.action()
+local manage_menu=widgets[#widgets]; assert(manage_menu.title=="Manage Sources · Page 1 / 1" and #manage_menu.item_table==#plugin.config.data.profiles+2)
+local example_item; for _,item in ipairs(manage_menu.item_table) do if item.text:find("Example",1,true) then example_item=item end end
+assert(example_item and example_item.state and example_item.action); example_item.action()
+manage_menu=widgets[#widgets]
+for _,item in ipairs(manage_menu.item_table) do if item.text=="Save" then item.action() end end
+assert(plugin:profile("example").enabled==false and plugin.config.data.source=="komiku")
+local saved_enabled={}
+for _,profile in ipairs(plugin.config.data.profiles) do saved_enabled[profile]=profile.enabled; profile.enabled=profile.id=="komiku" end
+local discover_sources={}; plugin:withDiscoverSource("Search",function(id) discover_sources[#discover_sources+1]=id end)
+assert(#discover_sources==1 and discover_sources[1]=="komiku")
+plugin:openDiscover()
+local search_menu=widgets[#widgets]; search_menu.item_table[1].action()
+local search_source_menu=widgets[#widgets]
+assert(search_source_menu.title=="Search · Sources" and search_source_menu.item_table[1].text=="All Manga")
+for profile,enabled in pairs(saved_enabled) do profile.enabled=enabled end
+plugin.config.data.profiles[#plugin.config.data.profiles].enabled=true
+plugin.config.data.source="example"; assert(plugin.config:save())
+plugin.panel_enabled=false; plugin.main_menu=nil
+plugin.cacheCover=function(_,manga,callback) callback(nil) end
+local previous_profiles,previous_source_method=plugin.config.data.profiles,plugin.source
+local pending_search,search_calls={},{}
+local fake_sources={
+    first={getLanguages=function() return {"en"} end,searchManga=function(_,query,page,callback)
+        assert(query=="two words" and page==2); search_calls.first=true; pending_search.first=callback
+    end},
+    second={getLanguages=function() return {"id"} end,searchManga=function(_,query,page,callback)
+        assert(query=="two words" and page==2); search_calls.second=true; pending_search.second=callback
+    end},
+}
+plugin.config.data.profiles={{id="first",name="First",enabled=true},{id="disabled",name="Disabled",enabled=false},{id="second",name="Second",enabled=true}}
+plugin.source=function(_,id) return fake_sources[id] end
+plugin:searchAllManga("two words",2)
+assert(widgets[#widgets].text=="Searching manga... (1/2)" and search_calls.first and not search_calls.second)
+pending_search.first({items={{id="a",source_id="first",title="First title"}},has_next=true})
+assert(widgets[#widgets].text=="Searching manga... (2/2)" and search_calls.second)
+pending_search.second({items={{id="b",source_id="second",title="Second title"}},has_next=false})
+local combined_search=widgets[#widgets]
+assert(combined_search.title=="Search" and #combined_search.item_table==2)
+assert(combined_search.item_table[1].maru_manga.source_id=="first" and combined_search.item_table[2].maru_manga.source_id=="second")
+plugin.config.data.profiles,plugin.source=previous_profiles,previous_source_method
+source=assert(plugin:source("example"))
+source.transport.get=function(_,url,cb)
+    if url:find("?q=",1,true) then cb('<article><a href="/manga/a"><img src="/cover.jpg"><span>Series</span></a></article>')
+    else cb('<h1>Series</h1><div class="summary__content">Description</div><li class="chapter"><a href="/chapter/1">Chapter 1</a></li>') end
+end
 local results; source:searchManga("series",1,function(r) results=r end); assert(results.items[1].title=="Series")
-plugin:showManga(results.items[1]); local detail=widgets[#widgets]; assert(detail.title=="Series")
+local original_details_for_ui=source.getMangaDetails
+source.getMangaDetails=function(_,manga,callback) callback({id=manga.id,title=manga.title,source_id=manga.source_id,description="",genres={}}) end
+plugin:showManga(results.items[1]); source.getMangaDetails=original_details_for_ui
+local detail=widgets[#widgets]; assert(detail.title=="Series")
 local add,chapters,download_all
 for _,item in ipairs(detail.item_table) do if type(item.text)=="string" and item.text:find("Add to library",1,true) then add=item elseif type(item.text)=="string" and item.text=="Chapters" then chapters=item elseif type(item.text)=="string" and item.text=="Download All Chapters" then download_all=item end end
 assert(add and chapters and download_all); assert(detail.item_table[6]==download_all and detail.item_table[7]==chapters); add.action(); assert(plugin.library:contains("example",results.items[1].id))
 assert(detail.item_table[1].maru_key=="Author" and detail.item_table[1].maru_value=="Unknown")
 local has_cover_action=false; for _,item in ipairs(detail.item_table) do if type(item.text)=="string" and item.text:lower():find("view cover",1,true) then has_cover_action=true end end; assert(not has_cover_action)
+source.getChapterList=function(_,manga,page,callback) callback({items={{id="chapter-1",manga_id=manga.id,name="Chapter 1"}},has_next=false}) end
 chapters.action(); local list=widgets[#widgets]; assert(list.title:match("Series") and #list.item_table>=2 and list.page_limit==8)
 plugin:loadList("Popular",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
 local popular=widgets[#widgets]; assert(popular.title=="Popular" and popular.item_table[1].maru_manga.title=="Series")
+results.items[1].latest_chapter="Chapter 23"
+plugin:loadList("Search",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
+assert(widgets[#widgets].item_table[1].maru_progress=="Chapter 23")
+results.items[1].cover_url="https://example.org/list-cover.jpg"
+local original_cache,original_details=plugin.cacheCover,source.getMangaDetails
+plugin.cacheCover=function(_,manga,callback)
+    callback(manga.cover_url=="https://example.org/detail-cover.jpg" and "/cache/detail-cover.jpg" or nil)
+end
+source.getMangaDetails=function(_,manga,callback) callback({cover_url="https://example.org/detail-cover.jpg"}) end
+plugin:loadList("Popular",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
+local cover_page={}; plugin.main_menu={visible=true,current_page=cover_page,renderCurrentPage=function() end}
+plugin:prefetchVisibleCovers(widgets[#widgets].item_table,1,1,cover_page)
+assert(widgets[#widgets].item_table[1].maru_image=="/cache/detail-cover.jpg" and widgets[#widgets].item_table[1].maru_cover_detail_attempted)
+plugin.main_menu=nil
+plugin.cacheCover,source.getMangaDetails=original_cache,original_details
 plugin:showLibrary(); local library_menu=widgets[#widgets]; assert(library_menu.title=="Library" and #library_menu.item_table==1 and library_menu.item_table[1].maru_progress:find("Check Updates",1,true))
 plugin:openLibrary(); local library_submenu=widgets[#widgets]; assert(library_submenu.item_table[1].text:find("Browse library",1,true) and library_submenu.item_table[2].text:find("Search library",1,true) and library_submenu.item_table[3].text:find("Check Updates",1,true))
 plugin:open(); local home=widgets[#widgets]; local home_items=home.current_page.items
@@ -99,14 +185,21 @@ for _,item in ipairs(about) do if item.text:find("Last Update: 2026%-%d%d%-%d%d 
 assert(update_fields==1)
 plugin.panel_enabled=false; plugin.main_menu=nil
 local repo=assert(plugin.repositories:add("https://example.org/catalog.json"))
-local catalog={schema_version=1,id="fixture",name="Fixture",author="MRHRTZ",version="1.12.0",status="Maintenance",sources={{id="catalogone",name="Catalog One",version=1,adapter="generic",base_url="https://example.org",languages={"en","id"},nsfw=true,profile={search_path="/?q={query}"}}}}
+local catalog={schema_version=1,id="fixture",name="Fixture",author="MRHRTZ",version="1.12.0",status="Maintenance",sources={{id="catalogone",name="Catalog One",version=1,adapter="generic",base_url="https://example.org",languages={"en","id"},nsfw=true,profile={search_path="/?q={query}",popular_path="/popular",latest_path="/latest",list_selector="article",chapter_selector=".chapters a",page_selector=".reader img"}}}}
 assert(plugin.repositories:update(repo,catalog))
 plugin:showRepositories(); local repos_menu=widgets[#widgets]; assert(repos_menu.item_table[5].text:find("Fixture",1,true)); assert(repos_menu.item_group[3]._underline_container.linesize==1); repos_menu.item_table[5].action()
 local repo_menu=widgets[#widgets]; assert(repo_menu.title=="Fixture")
 assert(repo_menu.item_table[9].text:find("Sources: 1",1,true)); repo_menu.item_table[9].action()
 local source_menu=widgets[#widgets]; assert(source_menu.title=="Fixture · Sources · Page 1")
-local has_tag=false; for _,item in ipairs(source_menu.item_table) do if item.text:find("NSFW",1,true) and item.text:find("en, id",1,true) then has_tag=true end end; assert(has_tag)
+local has_tag=false; for _,item in ipairs(source_menu.item_table) do if item.text:find("NSFW",1,true) and item.text:find("EN%-ID") then has_tag=true end end; assert(has_tag)
 local catalog_source=source_menu.item_table[#source_menu.item_table]; assert(catalog_source.action and catalog_source.state)
+plugin:catalogSourceDialog(repo,{id="incomplete",name="Incomplete",version=1,adapter="generic",base_url="https://example.org",profile={search_path="/"}})
+local unsupported_source=widgets[#widgets]; assert(unsupported_source.item_table[3].text:find("Unsupported",1,true))
+for _,item in ipairs(unsupported_source.item_table) do assert(not (item.action and item.text=="Install")) end
+plugin:catalogSourceDialog(repo,{id="madara-ready",name="Madara ready",version=1,adapter="madara",base_url="https://example.org",profile={search_path="/?q={query}",popular_path="/popular",latest_path="/latest",list_selector="article",chapter_selector=".chapters a",page_selector=".reader img"}})
+local madara_source=widgets[#widgets]; local madara_install=false
+for _,item in ipairs(madara_source.item_table) do if item.text=="Install" and item.action then madara_install=true end end
+assert(madara_install)
 plugin:showRepository({url="https://raw.githubusercontent.com/MRHRTZ/example/master/metadata.json",catalog={name="Example",author="Unknown",version=1,status="Unknown",sources={}}})
 assert(widgets[#widgets].item_table[2].maru_key=="Author" and widgets[#widgets].item_table[2].maru_value=="MRHRTZ")
 plugin:showRepositorySources(repo,"catalog one"); local filtered=widgets[#widgets]

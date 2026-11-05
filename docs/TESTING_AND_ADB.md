@@ -14,6 +14,14 @@ TEST_FULL=1 sh tests/integration_mangadex_loopback.sh
 
 The tests use local fixtures; routine test runs do not require live manga sites. Keep network tests restricted to a loopback server. Validate the repository JSON with the unit tests before publishing. Test queue behavior at concurrency 1 and 2, duplicate jobs, cancellation, failures, and settings rollback.
 
+### Native Windows host tests (no ADB)
+
+GCC 15.2 and Clang 21.1 were already installed. LuaJIT was installed into the existing MSYS2 UCRT64 environment using `pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-luajit`. LuaSocket DLLs were compiled with GCC against that LuaJIT; HTML parser and LuaSocket modules are under `%LOCALAPPDATA%/MaruManga/test-deps`, outside the plugin.
+
+Run `./tests/run-windows.ps1 -KOReaderBase <koreader-base-source-directory>` from the plugin directory. `-LuaJit`, `-Dependencies`, `-KOReaderRoot` and `-Pattern` override paths or select tests. The default executable is `C:\Program Files\Tools\msys2\ucrt64\bin\luajit.exe`. Dependencies must provide `htmlparser.lua`, `htmlparser/`, `socket.lua`, `socket/` (including `core.dll` and `url.lua`) and `mime` modules. The runner restores the calling environment afterward.
+
+On 2026-11-05, the latest full native Windows run had 43 test files pass, zero failures, and five skips: POSIX exclusive-copy symbols, a SHA fixture requiring the KOReader source tree, the UI integration fixture's POSIX overwrite-rename behavior, and the two MangaDex adapter tests whose source was removed. The MangaMost, Mangago, MangaRock, WEBTOON, WestManga and repository test files pass individually. Live Mangago requests used a source-scoped certificate bypass, decoded six image URLs, and downloaded six valid JPEGs. WestManga search, popular, latest, paginated chapter API and one JPEG reader image passed live HTTP checks. This host result does not replace Android, Linux archive integration or e-ink testing; no ADB was used.
+
 ## Deploy to the configured Android emulator
 
 Use the explicitly configured target `emulator-5556`; check it first:

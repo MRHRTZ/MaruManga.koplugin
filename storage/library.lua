@@ -13,6 +13,37 @@ function Store.open(settings)
     if raw.chapters == nil then raw.chapters = {} end
     if raw.chapter_sync == nil then raw.chapter_sync = {} end
     if type(raw.archives) ~= "table" or type(raw.chapters) ~= "table" or type(raw.chapter_sync) ~= "table" then return nil, "Invalid chapter metadata; original preserved" end
+    -- Preserve MangaMost library/history/download metadata after its former
+    -- profile ID (`mangago`) was separated from the Mangago website source.
+    local function old_mangamost(item)
+        return type(item)=="table" and item.source_id=="mangago" and type(item.url)=="string" and item.url:match("^https://mangamost%.com/")~=nil
+    end
+    local old_mangamost_ids={}
+    for old_key,item in pairs(raw.manga) do
+        if old_mangamost(item) then
+            old_mangamost_ids[item.id]=true
+            local new_key="mangamost:"..item.id
+            item.source_id="mangamost"
+            if old_key~=new_key then raw.manga[old_key]=nil; if raw.manga[new_key]==nil then raw.manga[new_key]=item end end
+        end
+    end
+    local function migrate_keys(map,belongs)
+        local pending={}
+        for old_key,value in pairs(map) do
+            if type(old_key)=="string" and old_key:sub(1,8)=="mangago:" and belongs(old_key,value) then pending[#pending+1]={old_key=old_key,new_key="mangamost:"..old_key:sub(9),value=value} end
+        end
+        for _,entry in ipairs(pending) do map[entry.old_key]=nil; if map[entry.new_key]==nil then map[entry.new_key]=entry.value end end
+    end
+    migrate_keys(raw.chapters,function(_,value) return type(value)=="table" and type(value.metadata)=="table" and old_mangamost_ids[value.metadata.manga_id] end)
+    migrate_keys(raw.chapter_sync,function(old_key) return old_mangamost_ids[old_key:sub(9)] end)
+    for _,item in pairs(raw.archives) do
+        if type(item)=="table" and type(item.manga)=="table" and item.manga.source_id=="mangago" and old_mangamost_ids[item.manga.id] then
+            item.manga.source_id="mangamost"
+            if type(item.chapters)=="table" then for _,chapter in ipairs(item.chapters) do if type(chapter)=="table" then chapter.source_id="mangamost" end end end
+            if type(item.chapter)=="table" then item.chapter.source_id="mangamost" end
+        end
+    end
+    for _,item in ipairs(raw.history) do if type(item)=="table" and item.source_id=="mangago" and old_mangamost_ids[item.manga_id] then item.source_id="mangamost"; item.key="mangamost:"..tostring(item.manga_id or "") end end
     return setmetatable({settings=settings, data=raw}, Store)
 end
 function Store:save()

@@ -9,6 +9,10 @@ assert(finished == true and built.count == 2 and built.first == "staging/1" and 
 deps.download=function(page,path,limit,cb) files[path]=true; cb({content_type="text/html",size=4,prefix="no"}) end
 Stager.start(deps,{{image_url="https://one"}},"out.cbz",function(ok,err) finished=err end)
 assert(finished and next(files)==nil)
+deps.download=function(page,path,limit,cb) files[path]=true; cb(nil,"No space left on device") end
+finished=nil
+Stager.start(deps,{{image_url="https://one"}},"out.cbz",function(ok,err) finished=err end)
+assert(finished=="No space left on device" and next(files)==nil)
 local callback, cancelled
  deps.download=function(page,path,limit,cb) files[path]=true; callback=cb; return function() cancelled=true end end
 local job=Stager.start(deps,{{image_url="https://one"}},"out.cbz",function(ok,err) finished=err end)

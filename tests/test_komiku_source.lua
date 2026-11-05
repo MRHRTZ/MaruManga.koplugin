@@ -6,11 +6,11 @@ local function plain_text(value) return (value:gsub("<[^>]*>","")) end
 local profile={id="komiku",name="Komiku",base_url="https://komiku.org",api_url="https://api.komiku.org",languages={"id"},list_selector="div.bge",list_link_selector="a",list_title_selector="h3",title_selector="h1",description_selector="#Sinopsis > p",author_selector="table.inftable tr > td:contains(Author) + td",artist_selector="table.inftable tr > td:contains(Artist) + td",status_selector="table.inftable tr > td:contains(Status) + td",chapter_selector="#Daftar_Chapter tr",chapter_link_selector="a",page_selector="#Baca_Komik img",page_attributes={"src"}}
 local parser=Parser.new(html,url.absolute,plain_text,profile,function(value) return value end)
 local function response(body) return function(_,request_url,callback) callback(body) end end
-local list_html='<div class="bge"><a href="/manga/naruto/"><img src="https://thumbnail.komiku.org/naruto.jpg"><h3>Naruto</h3></a></div>'
+local list_html='<div class="bge"><a href="/manga/naruto/"><img src="https://thumbnail.komiku.org/naruto.jpg"><h3>Naruto</h3></a><div class="new1"><a><span>Awal:</span><span>Chapter 1</span></a></div><div class="new1"><a><span>Terbaru:</span><span>Chapter 23</span></a></div></div>'
 local transport={get=response(list_html)}
 local source=Source.new(profile,parser,transport)
 assert(Interface.validate(source)); assert(source:getLanguages()[1]=="id")
-source:searchManga("one piece & more",2,function(result) assert(result.page==2 and #result.items==1 and result.items[1].url=="https://komiku.org/manga/naruto/" and result.items[1].id=="naruto" and result.items[1].id:match("^[%w_-]+$") and result.items[1].cover_url=="https://thumbnail.komiku.org/naruto.jpg") end)
+source:searchManga("one piece & more",2,function(result) assert(result.page==2 and #result.items==1 and result.items[1].url=="https://komiku.org/manga/naruto/" and result.items[1].id=="naruto" and result.items[1].id:match("^[%w_-]+$") and result.items[1].cover_url=="https://thumbnail.komiku.org/naruto.jpg" and result.items[1].latest_chapter=="Chapter 23") end)
 source:getPopularManga(3,function(result) assert(result.page==3) end)
 
 local chapter_html='<h1>Naruto</h1><div id="Sinopsis"><p>Shinobi story</p></div><table id="Daftar_Chapter"><tr><td class="judulseries"><a href="/manga/naruto/chapter-10/">Chapter 10</a></td></tr><tr><td class="judulseries"><a href="/manga/naruto/chapter-2/">Chapter 2</a></td></tr></table>'
