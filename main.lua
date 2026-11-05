@@ -629,7 +629,12 @@ function MaruManga:showManga(manga)
                     self:menu(detail.title,items,nil,false,nil,{
                         hero=cover,
                         hero_icon=not cover,
-                        page_limit=#items,
+                        -- Keep one fewer metadata row on the cover page. The
+                        -- detail header, cover and synopsis consume vertical
+                        -- space; this leaves room on short e-ink screens and
+                        -- avoids overflowing KOReader's ButtonTable scroll grid.
+                        page_limit=4,
+                        page_title=detail.title,
                         description=description==_("Unknown") and _("No description") or description,
                     })
                 end,_("Could not display manga details"))
