@@ -322,13 +322,17 @@ function M.new(options)
             end
         end
         if page_index>1 then
-            rows[#rows+1]=MainRow:new{text=_("Previous page").." ("..page_index.."/"..page_count..")",icon=icon_dir.."back.svg",width=inner_width,callback=function()
-                page.page_index=page_index-1; dialog:renderCurrentPage()
+            rows[#rows+1]=MainRow:new{text=_("Previous page").." ("..page_index.."/"..page_count..")",icon=icon_dir.."previous-page.svg",width=inner_width,callback=function()
+                runActionSafely(_("Previous page"),function()
+                    page.page_index=page_index-1; dialog:renderCurrentPage()
+                end)
             end}
         end
         if page_index<page_count then
             rows[#rows+1]=MainRow:new{text=_("Next page").." ("..page_index.."/"..page_count..")",icon=icon_dir.."next-page.svg",width=inner_width,callback=function()
-                page.page_index=page_index+1; dialog:renderCurrentPage()
+                runActionSafely(_("Next page"),function()
+                    page.page_index=page_index+1; dialog:renderCurrentPage()
+                end)
             end}
         elseif page.external_next then
             rows[#rows+1]=MainRow:new{text=page.external_next.text or _("Load more results"),icon=icon_dir.."next-page.svg",width=inner_width,callback=function()
