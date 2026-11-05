@@ -159,6 +159,67 @@ function Builder.merge(archiver,fs,target,pages,chapter_title)
     if not published then fs.remove(tmp); return nil,"Unable to publish manga archive" end
     return true,count
 end
+-- Remove one named chapter directory from an existing manga CBZ. The caller
+-- must confirm the operation and update the matching library digest afterward.
+function Builder.removeChapter(archiver,fs,target,chapter_title)
+    if type(target)~="string" or target=="" or type(chapter_title)~="string" or chapter_title=="" then return nil,"Invalid chapter archive" end
+    if not fs.exists(target) then return nil,"Manga CBZ is missing" end
+    local tmp=target..".part"
+    if fs.exists(tmp) then return nil,"Incomplete archive already exists" end
+    local folder=chapterFolder(chapter_title)
+    local reader=archiver.Reader:new()
+    if not reader:open(target) then return nil,"Existing manga archive is invalid" end
+    local files,seen={},{}
+    local removed=0
+    local ok,err=pcall(function()
+        for entry in reader:iterate() do
+            if entry.mode~="file" or type(entry.path)~="string" or entry.path:find("\\",1,true) or entry.path:sub(1,1)=="/" or entry.path:find("../",1,true) then error("Invalid existing manga archive") end
+            local dir,filename=entry.path:match("^([^/]+)/([^/]+)$")
+            local number,ext
+            if filename then number,ext=filename:match("^(%d+)%.([%a]+)$") end
+            local size=tonumber(entry.size)
+            if not dir or dir=="." or dir==".." or not number or tonumber(number)<1 or not extensions[ext:lower()] or not size or size<=0 or size>20971520 then error("Invalid existing manga archive") end
+            if not fs.verifyEntry or not fs.verifyEntry(reader,entry) then error("Existing manga archive checksum failed") end
+            if dir==folder then removed=removed+1
+            else
+                if seen[entry.path] then error("Duplicate existing manga archive entry") end
+                seen[entry.path]=true
+                files[#files+1]={path=entry.path,entry_path=entry.path}
+            end
+        end
+    end)
+    if not ok or reader.err then reader:close(); return nil,tostring(err):find("Invalid",1,true) and tostring(err) or "Existing manga archive is corrupted" end
+    if removed==0 then reader:close(); return nil,"Chapter images were not found in the manga CBZ" end
+    if #files==0 then reader:close(); return true,0 end
+    table.sort(files,function(a,b) return naturalLess(a.path,b.path) end)
+    if not fs.publishReplace then reader:close(); return nil,"Safe archive replacement is unavailable" end
+    local writer=archiver.Writer:new()
+    if not writer:open(tmp,"zip") then reader:close(); return nil,"Unable to create manga archive" end
+    local function fail(message)
+        writer:close(); reader:close(); fs.remove(tmp); return nil,message
+    end
+    if not writer:setZipCompression("store") then return fail("Unable to configure manga archive") end
+    for _,item in ipairs(files) do
+        local data=reader:extractToMemory(item.entry_path)
+        if not data then return fail("Unable to read chapter image") end
+        local added=writer:addFileFromMemory(item.path,data)
+        data=nil
+        if not added or writer.err then return fail("Unable to rebuild manga archive") end
+    end
+    writer:close(); reader:close()
+    local check=archiver.Reader:new()
+    if not check:open(tmp) then fs.remove(tmp); return nil,"Unable to verify rebuilt manga archive" end
+    local count,valid=0,true
+    for entry in check:iterate() do
+        count=count+1
+        if entry.path~=files[count].path or entry.mode~="file" or not entry.size or entry.size<=0 or entry.size>20971520 or not fs.verifyEntry or not fs.verifyEntry(check,entry) then valid=false end
+    end
+    if check.err or count~=#files then valid=false end
+    check:close()
+    if not valid then fs.remove(tmp); return nil,"Rebuilt manga archive is corrupted" end
+    if not fs.publishReplace(tmp,target) then fs.remove(tmp); return nil,"Unable to replace manga archive" end
+    return true,count
+end
 -- Merge a chapter with the current manga archive and optional per-chapter
 -- legacy archives. Legacy root-level pages are placed under their chapter
 -- title during the one-time migration.
@@ -170,7 +231,8 @@ function Builder.mergeAll(archiver,fs,target,pages,chapter_title,legacy_archives
     local sources={}
     if fs.exists(target) then sources[#sources+1]={path=target} end
     for _,source in ipairs(legacy_archives or {}) do
-        if type(source)=="table" and type(source.path)=="string" and source.path~=target and type(source.folder)=="string" then
+        if type(source)=="table" and type(source.path)=="string" and source.path~=target
+            and (type(source.folder)=="string" or source.manga_archive==true) then
             sources[#sources+1]=source
         end
     end

@@ -4,13 +4,14 @@ local module_path=debug.getinfo(1,"S").source:sub(2):match("^(.*[/\\])") or "rea
 local ArchiveCheck=dofile(module_path .. "archive_check.lua")
 function Reader.open(deps, manga, chapter, callback)
     if not manga or not chapter or chapter.manga_id ~= manga.id then callback(nil,"Invalid chapter"); return end
+    local function exists(file) return type(file)=="string" and deps.fs.exists and deps.fs.exists(file) or false end
     if deps.fs.targetFor then
         local existing = deps.library.archiveFor and deps.library:archiveFor(manga.source_id,manga.id,chapter.id)
-        if not existing or not deps.fs.exists(existing) then existing = deps.fs.targetFor(manga.source_id,manga.id,chapter.id) end
-        if existing and deps.fs.exists(existing .. ".incomplete") then callback(nil,"Incomplete archive; clear incomplete files before retrying"); return end
+        if not existing or not exists(existing) then existing = deps.fs.targetFor(manga.source_id,manga.id,chapter.id,manga.title) end
+        if existing and exists(existing .. ".incomplete") then callback(nil,"Incomplete archive; clear incomplete files before retrying"); return end
         local already_in_archive=deps.library.archiveHasChapter and deps.library:archiveHasChapter(existing,chapter.id)
-        if already_in_archive==nil then already_in_archive=deps.fs.exists(existing) end
-        if existing and deps.fs.exists(existing) and already_in_archive then
+        if already_in_archive==nil then already_in_archive=exists(existing) end
+        if existing and exists(existing) and already_in_archive then
             local expected=deps.library.archiveDigest and deps.library:archiveDigest(existing)
             local function checked(valid,digest,why)
                 if not valid then return callback(nil,why or "Downloaded archive is invalid") end
@@ -25,7 +26,15 @@ function Reader.open(deps, manga, chapter, callback)
             checked(valid,nil,why); return
         end
     end
-    local paths, err = deps.fs.prepare(manga.source_id,manga.id,chapter.id)
+    local indexed_target=deps.fs.targetFor and deps.library.mangaArchiveFor and deps.library:mangaArchiveFor(manga.source_id,manga.id)
+    local target=indexed_target
+    if deps.fs.targetFor and (not target or not deps.fs.isDirectMangaArchive or not deps.fs.isDirectMangaArchive(target)) then
+        local target_error
+        target,target_error=deps.fs.targetFor(manga.source_id,manga.id,chapter.id,manga.title)
+        if not target then return callback(nil,target_error or "Unable to name manga archive") end
+    end
+    if target and exists(target) and indexed_target~=target then return callback(nil,"A file with this manga's unique name already exists. Rename it or choose another storage folder to avoid overwriting it.") end
+    local paths, err = deps.fs.prepare(manga.source_id,manga.id,chapter.id,manga.title,target)
     if not paths then callback(nil,err); return end
     local finished=false
     local legacy_archives=deps.legacyArchives and deps.legacyArchives(manga,paths.target) or {}
@@ -57,7 +66,7 @@ function Reader.open(deps, manga, chapter, callback)
             if not ok then return finish(nil,stage_err) end
             local function linked(digest,hash_error)
                 if not digest and deps.hashArchive then return finish(nil,hash_error or "Unable to hash archive") end
-                local saved,save_err=deps.library:linkArchive(paths.target,manga,chapter,#pages,digest)
+                local saved,save_err=deps.library:linkArchive(paths.target,manga,chapter,#pages,digest,true)
                 if not saved then return finish(nil,save_err or "Unable to save archive metadata") end
                 if deps.library.mergeArchiveRecords then
                     local merged,old_paths=deps.library:mergeArchiveRecords(paths.target,manga,digest)

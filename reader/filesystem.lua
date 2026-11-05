@@ -7,19 +7,39 @@ function FS.new(lfs, link, root, remove_file, copy_exclusive, read_marker)
         local value=file:read(16); file:close(); return value
     end
     assert(lfs and link and type(root)=="string" and root~="")
-    local self={root=root}
+    local data_root=root .. "/.marumanga"
+    local self={root=root,data_root=data_root}
     local function mkdir(path)
         local mode=(lfs.symlinkattributes or lfs.attributes)(path,"mode")
         if mode=="directory" then return true end
         if mode then return nil, "Path is not a directory" end
         return lfs.mkdir(path)
     end
-    function self.targetFor(source, manga, chapter)
+    function self.mangaTargetFor(source,manga,title)
         for _, part in ipairs({source,manga}) do
             if type(part)~="string" or not part:match("^[%w_-]+$") then return nil,"Invalid identifier" end
         end
-        if type(chapter)~="string" or not chapter:match("^[%w_-]+$") then return nil,"Invalid identifier" end
-        return root .. "/manga/" .. source .. "/" .. manga .. "/manga.cbz"
+        local identity=source .. "-" .. manga
+        local label=(type(title)=="string" and title or "manga"):lower():gsub("[^%w]+","-"):gsub("^-+",""):gsub("-+$","")
+        if label=="" then label="manga" end
+        local max_label=240-#identity-6
+        if max_label<1 then return nil,"Manga identifier is too long for a safe filename" end
+        if #label>max_label then label=label:sub(1,max_label):gsub("-+$","") end
+        return root .. "/" .. label .. "--" .. identity .. ".cbz"
+    end
+    function self.isDirectMangaArchive(path)
+        return type(path)=="string" and path:sub(1,#root+1)==root .. "/"
+            and not path:sub(#root+2):find("[/\\]") and path:sub(-4)==".cbz"
+    end
+    function self.isMangaArchive(path)
+        return self.isDirectMangaArchive(path) or type(path)=="string" and path:sub(-10)=="/manga.cbz"
+    end
+    function self.targetFor(source, manga, chapter, title)
+        for _, part in ipairs({source,manga}) do
+            if type(part)~="string" or not part:match("^[%w_-]+$") then return nil,"Invalid identifier" end
+        end
+        if chapter~=nil and (type(chapter)~="string" or not chapter:match("^[%w_-]+$")) then return nil,"Invalid identifier" end
+        return self.mangaTargetFor(source,manga,title)
     end
     function self.legacyTargetFor(source,manga,chapter)
         for _, part in ipairs({source,manga,chapter}) do
@@ -30,17 +50,21 @@ function FS.new(lfs, link, root, remove_file, copy_exclusive, read_marker)
     function self.coverDir(source,manga)
         for _,part in ipairs({source,manga}) do if type(part)~="string" or not part:match("^[%w_-]+$") then return nil,"Invalid identifier" end end
         local parent=root
-        for _,part in ipairs({false,"manga",source,manga}) do
+        for _,part in ipairs({false,".marumanga","manga",source,manga}) do
             if part then parent=parent .. "/" .. part end
             local ok,err=mkdir(parent); if not ok then return nil,err end
         end
         return parent
     end
-    function self.prepare(source, manga, chapter)
-        local target, why = self.targetFor(source,manga,chapter)
+    function self.prepare(source, manga, chapter, title, target_override)
+        local target, why = self.targetFor(source,manga,chapter,title)
         if not target then return nil, why end
+        if target_override then
+            if not self.isDirectMangaArchive(target_override) then return nil,"Unsafe manga archive target" end
+            target=target_override
+        end
         local parent=root
-        for _, part in ipairs({false,"manga",source,manga}) do
+        for _, part in ipairs({false,".marumanga","manga",source,manga}) do
             if part then parent=parent .. "/" .. part end
             local ok,err=mkdir(parent); if not ok then return nil,err end
         end
@@ -49,12 +73,18 @@ function FS.new(lfs, link, root, remove_file, copy_exclusive, read_marker)
         if not ok then return nil,err or "Staging directory already exists" end
         return {target=target,staging=staging}
     end
-    function self.cleanupTemporary(source,manga,chapter)
-        local target,err=self.targetFor(source,manga,chapter); if not target then return nil,err end
+    function self.cleanupTemporary(source,manga,chapter,title,target_override)
+        local target,err=self.targetFor(source,manga,chapter,title); if not target then return nil,err end
+        if target_override then
+            if not self.isDirectMangaArchive(target_override) then return nil,"Unsafe incomplete archive target" end
+            target=target_override
+        end
         if type(lfs.symlinkattributes)~="function" then return nil,"Safe cleanup is unavailable" end
-        local parent=root
+        local parent=data_root
         local root_mode=lfs.symlinkattributes(root,"mode")
         if root_mode and root_mode~="directory" then return nil,"Unsafe staging root" end
+        local data_mode=lfs.symlinkattributes(data_root,"mode")
+        if data_mode and data_mode~="directory" then return nil,"Unsafe staging data directory" end
         for _,part in ipairs({"manga",source,manga}) do
             parent=parent .. "/" .. part
             local parent_mode=lfs.symlinkattributes(parent,"mode")
@@ -100,7 +130,7 @@ function FS.new(lfs, link, root, remove_file, copy_exclusive, read_marker)
     function self.clearSourceCovers(source)
         if type(source)~="string" or not source:match("^[%w_-]+$") then return nil,"Invalid source" end
         if type(lfs.symlinkattributes)~="function" then return nil,"Safe cache cleanup is unavailable" end
-        local manga_root=root .. "/manga"
+        local manga_root=data_root .. "/manga"
         local source_root=manga_root .. "/" .. source
         local root_mode=lfs.symlinkattributes(manga_root,"mode")
         if not root_mode then return 0 end

@@ -1,7 +1,7 @@
 local Repos=dofile("core/repositories.lua")
 local store={data={},readSetting=function(self,k) return self.data[k] end,saveSetting=function(self,k,v) self.data[k]=v end,flush=function() end}
 local repos=assert(Repos.open(store)); assert(#repos:list()==1 and repos:list()[1].url==Repos.DEFAULT_URL)
-local fallback_sources=repos:list()[1].catalog.sources; assert(repos:list()[1].url=="https://raw.githubusercontent.com/MRHRTZ/maru-manga-repository/refs/heads/master/metadata.json" and repos:list()[1].catalog.version=="1.23.4" and repos:list()[1].catalog.name=="MaruManga Repository" and #fallback_sources==7 and fallback_sources[1].id=="komiku" and fallback_sources[1].version=="3.0.0" and fallback_sources[1].profile.api_url=="https://api.komiku.org" and fallback_sources[1].profile.metadata_row_selector=="table.inftable tr" and fallback_sources[1].icon_url=="https://www.google.com/s2/favicons?domain=komiku.org&sz=64")
+local fallback_sources=repos:list()[1].catalog.sources; assert(repos:list()[1].url=="https://raw.githubusercontent.com/MRHRTZ/maru-manga-repository/refs/heads/master/metadata.json" and repos:list()[1].catalog.version=="1.23.5" and repos:list()[1].catalog.name=="MaruManga Repository" and #fallback_sources==7 and fallback_sources[1].id=="komiku" and fallback_sources[1].version=="3.0.0" and fallback_sources[1].profile.api_url=="https://api.komiku.org" and fallback_sources[1].profile.metadata_row_selector=="table.inftable tr" and fallback_sources[1].icon_url=="https://www.google.com/s2/favicons?domain=komiku.org&sz=64")
 assert(not repos:add(Repos.DEFAULT_URL))
 assert(not repos:add("http://example.org/meta.json")); assert(repos:add("https://example.org/catalog")); assert(not repos:add("https://example.org/../meta.json"))
 assert(repos:remove(repos.data.items[1]))
@@ -41,8 +41,8 @@ local source_ids={}; for _,entry in ipairs(fallback_sources) do source_ids[entry
 assert(source_ids.mangamost and source_ids.mangamost.adapter=="mangamost" and not source_ids.mangamost.nsfw)
 assert(source_ids.mangago and source_ids.mangago.adapter=="mangago" and source_ids.mangago.nsfw and source_ids.mangago.base_url=="https://www.mangago.zone")
 assert(source_ids.westmanga and source_ids.westmanga.adapter=="westmanga" and source_ids.westmanga.base_url=="https://www.westmanga.shop")
-assert(source_ids.webtoon and source_ids.webtoon.version=="1.1.0" and source_ids.webtoon.profile.locale=="en")
-assert(source_ids.webtoon_id and source_ids.webtoon_id.name=="WEBTOON" and source_ids.webtoon_id.adapter=="webtoon" and source_ids.webtoon_id.profile.locale=="id" and source_ids.webtoon_id.languages[1]=="id")
+assert(source_ids.webtoon and source_ids.webtoon.version=="1.2.0" and source_ids.webtoon.profile.locale=="en" and source_ids.webtoon.profile.chapter_title_selector==".subj")
+assert(source_ids.webtoon_id and source_ids.webtoon_id.version=="1.1.0" and source_ids.webtoon_id.name=="WEBTOON" and source_ids.webtoon_id.adapter=="webtoon" and source_ids.webtoon_id.profile.locale=="id" and source_ids.webtoon_id.profile.chapter_title_selector==".subj" and source_ids.webtoon_id.languages[1]=="id")
 assert(Repos.validate({schema_version=1,id="webtoon-id-test",name="WEBTOON ID test",version="1.0.0",sources={source_ids.webtoon_id}}))
 local wrong_webtoon_id={}; for k,v in pairs(source_ids.webtoon_id) do wrong_webtoon_id[k]=v end
 wrong_webtoon_id.profile={}; for k,v in pairs(source_ids.webtoon_id.profile) do wrong_webtoon_id.profile[k]=v end

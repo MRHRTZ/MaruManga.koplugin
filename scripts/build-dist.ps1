@@ -33,7 +33,7 @@ try {
     $archive = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Create)
     try {
         Get-ChildItem -LiteralPath $PluginDirectory -File -Recurse -Force |
-            Where-Object { $_.FullName -notlike "$OutputDirectory\*" -and $_.FullName -notmatch '[\\/]\.git[\\/]' } |
+            Where-Object { $_.FullName -notlike "$OutputDirectory\*" -and $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.Name -notmatch '^CHANGELOG-v.*\.md$' -and $_.Name -notin @('device-post-push-menu.png', 'device-settings-temp.lua', 'device-storage-layout.png') } |
             Sort-Object FullName |
             ForEach-Object {
                 $relative = $_.FullName.Substring($PluginDirectory.Length).TrimStart('\', '/') -replace '\\', '/'

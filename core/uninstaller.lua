@@ -68,13 +68,33 @@ local function removeIfEmpty(lfs, path)
     return true
 end
 
-function M.removeData(lfs, settings_path, download_root, remove_file)
+local function removeOwnedArchive(lfs, download_root, path, remove_file)
+    local prefix=download_root.."/"
+    if type(path)~="string" or path:sub(1,#prefix)~=prefix then return true end
+    local name=path:sub(#prefix+1)
+    if not name:match("^[%w_-]+%.cbz$") then return true end
+    for _,suffix in ipairs({"", ".incomplete", ".part", ".broken", ".broken.incomplete"}) do
+        local file=path..suffix
+        local mode=modeOf(lfs,file)
+        if mode then
+            if mode~="file" then return nil,"Refusing to remove an unsafe manga archive" end
+            if not remove_file(file) then return nil,"Could not remove a downloaded manga archive" end
+        end
+    end
+    return true
+end
+
+function M.removeData(lfs, settings_path, download_root, remove_file, downloaded_archives)
     settings_path = normalizePath(settings_path)
     download_root = normalizePath(download_root)
     if not settings_path or not download_root then return nil, "Refusing to remove unsafe plugin data paths" end
-    for _, child in ipairs({"manga", "cache"}) do
+    for _, child in ipairs({".marumanga", "manga", "cache"}) do
         local removed, err = M.removeTree(lfs, download_root .. "/" .. child, remove_file)
         if not removed then return nil, err end
+    end
+    for _,archive in ipairs(downloaded_archives or {}) do
+        local removed,err=removeOwnedArchive(lfs,download_root,archive,remove_file)
+        if not removed then return nil,err end
     end
     local removed, err = removeIfEmpty(lfs, download_root)
     if not removed then return nil, err end
@@ -94,7 +114,7 @@ function M.uninstall(opts)
         return nil, "Plugin directory is missing or unsafe"
     end
     if opts.remove_data then
-        local removed, err = M.removeData(opts.lfs, opts.settings_path, opts.download_root, opts.remove_file)
+        local removed, err = M.removeData(opts.lfs, opts.settings_path, opts.download_root, opts.remove_file, opts.downloaded_archives)
         if not removed then return nil, err end
     end
     return M.removeTree(opts.lfs, plugin_path, opts.remove_file)

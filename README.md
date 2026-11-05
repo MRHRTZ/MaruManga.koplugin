@@ -33,7 +33,7 @@ For Android, the plugin directory is normally under KOReader's application data.
 | Library | Downloads |
 | <img src="images/library.png" alt="MaruManga Downloader library" width="360"> | <img src="images/downloads.png" alt="MaruManga Downloader download queue" width="360"> |
 
-**Settings** is split into Chapter language, Network, Download, Storage, and Uninstall. Network contains timeout, retries, user-agent, DNS and the optional SSL certificate verification override. Download controls concurrent downloads (default 2). Storage shows the active folder (default `marumanga` under KOReader's data directory) and opens KOReader's folder picker; **Restore default folder** returns to that location. Uninstall asks separately whether to keep or remove MaruManga's data.
+**Settings** is split into Chapter language, Network, Download, Storage, and Uninstall. Network contains timeout, retries, user-agent, DNS and the optional SSL certificate verification override. Download controls concurrent downloads (default 2). Storage shows the active folder (default `marumanga` under KOReader's data directory) and opens KOReader's folder picker; **Restore default folder** returns to that location. Manga CBZ files are written directly into the selected folder with a unique manga name, such as `Tower-of-God--webtoon-12345.cbz`. Covers, cache, source icons, and image staging files are kept under the hidden `.marumanga/` subfolder. Library and queue settings continue to use KOReader's LuaSettings persistence. Uninstall asks separately whether to keep or remove MaruManga's data.
 
 ## Update checks
 

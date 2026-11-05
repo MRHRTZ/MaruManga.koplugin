@@ -164,7 +164,7 @@ local function loadingMessage(text)
     end
     return message
 end
-local PLUGIN_VERSION="0.2.8"
+local PLUGIN_VERSION="0.2.9"
 local PLUGIN_LAST_UPDATE="2026-11-05"
 function MaruManga:init()
     self.ui.menu:registerToMainMenu(self)
@@ -287,7 +287,7 @@ function MaruManga:source(id)
             source_class=MangaRock
         end
         local ok,result
-        if config.kind=="webtoon" then ok,result=pcall(source_class.new,profile,parsed,transport,html)
+        if config.kind=="webtoon" or config.kind=="mangago" then ok,result=pcall(source_class.new,profile,parsed,transport,html)
         else ok,result=pcall(source_class.new,profile,parsed,transport) end
         if not ok then self:notice(_("Invalid source configuration")..": "..tostring(result)); return end
         source=result
@@ -358,7 +358,7 @@ function MaruManga:findCachedSourceIcon(entry)
     if type(entry)~="table" or type(entry.id)~="string" or not entry.id:match("^[%w_-]+$") then return nil end
     local ok,lfs=pcall(require,"libs/libkoreader-lfs")
     if not ok then return nil end
-    local dir=self:downloadRoot().."/cache/source-icons"
+    local dir=self:appDataRoot().."/cache/source-icons"
     for _,extension in ipairs({"png","jpg","webp","gif"}) do
         local file=dir.."/"..entry.id.."."..extension
         local mode=lfs.symlinkattributes and lfs.symlinkattributes(file,"mode") or lfs.attributes(file,"mode")
@@ -397,7 +397,7 @@ function MaruManga:cacheSourceIcon(entry,callback)
         if mode and mode~="directory" then finish(nil); return end
         if not mode and not lfs.mkdir(directory) then finish(nil); return end
     end
-    for _,suffix in ipairs({"/cache","/cache/source-icons"}) do
+    for _,suffix in ipairs({"/.marumanga","/cache","/source-icons"}) do
         directory=directory..suffix
         local mode=lfs.symlinkattributes and lfs.symlinkattributes(directory,"mode") or lfs.attributes(directory,"mode")
         if mode and mode~="directory" then finish(nil); return end
@@ -629,11 +629,10 @@ function MaruManga:showManga(manga)
                     self:menu(detail.title,items,nil,false,nil,{
                         hero=cover,
                         hero_icon=not cover,
-                        -- Keep one fewer metadata row on the cover page. The
-                        -- detail header, cover and synopsis consume vertical
-                        -- space; this leaves room on short e-ink screens and
-                        -- avoids overflowing KOReader's ButtonTable scroll grid.
-                        page_limit=4,
+                        -- Keep the mixed cover/synopsis page compact. On
+                        -- longer WEBTOON descriptions and wrapped metadata,
+                        -- several rows can exceed ButtonDialog's safe height.
+                        page_limit=3,
                         page_title=detail.title,
                         description=description==_("Unknown") and _("No description") or description,
                     })
@@ -686,24 +685,31 @@ function MaruManga:chapters(manga, page, order)
         for ignored_index, chapter in ipairs(result.items) do
             local c = chapter
             local downloaded=false
+            local chapter_status
             if self.library then
                 local file=self.library:archiveFor(manga.source_id,manga.id,c.id)
                 downloaded=file~=nil and self.library:archiveHasChapter(file,c.id) and self:filesystem().exists(file)
+                chapter_status=self.library:chapterStatus(manga.source_id,c.id)
             end
             local date=type(c.upload_date)=="number" and (" · " .. os.date("%Y-%m-%d",c.upload_date)) or ""
-            items[#items+1] = {text=c.name .. (status and status.read and " · ✓" or "") .. (downloaded and " · ↓" or "") .. date .. (c.scanlator and (" · " .. c.scanlator) or ""), action=function()
-                self:menu(c.name, {
-                    {text=_("Download"),action=function() self:queueChapter(manga,c) end},
-                })
+            items[#items+1] = {text=c.name .. (chapter_status and chapter_status.read and " · ✓" or "") .. (downloaded and " · ↓" or "") .. date .. (c.scanlator and (" · " .. c.scanlator) or ""), action=function()
+                local actions={}
+                if downloaded then
+                    actions[#actions+1]={text=_("Open downloaded file"),icon=path.."images/menu/book.svg",action=function() self:openDownloaded(manga,c) end}
+                    actions[#actions+1]={text=_("Verify downloaded file"),icon=path.."images/menu/verify.svg",action=function() self:verifyDownload(manga,c) end}
+                else
+                    actions[#actions+1]={text=_("Download"),icon=path.."images/menu/download.svg",action=function() self:queueChapter(manga,c) end}
+                end
+                self:menu(c.name,actions)
             end}
         end
         if #items == 1 then items[2]={text=_("No chapters in the selected language")} end
         if result.has_next then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg", action=function() self:chapters(manga, page+1, order) end} end
         self:menu(manga.title .. " · " .. page, items,nil,false,nil,{
-            -- Leave room for both pagination rows. On e-ink screens, 8 rows
-            -- fit on page 1 but page 2 adds both Previous and Next; the taller
-            -- ButtonDialog then overflows while KOReader builds its scroll grid.
-            page_limit=6,
+            -- Chapter titles can wrap to multiple lines, particularly in
+            -- WEBTOON listings. Keep each native dialog page short so
+            -- ButtonDialog never enters its fragile custom-widget scroll grid.
+            page_limit=3,
             page_title=manga.title,
             header_action={icon=path.."images/menu/download-all.svg",callback=function() self:downloadAllChapters(manga) end},
         })
@@ -785,6 +791,9 @@ end
 function MaruManga:downloadRoot()
     return self.config and self.config.data.download_dir or (DataStorage:getFullDataDir() .. "/marumanga")
 end
+function MaruManga:appDataRoot()
+    return self:downloadRoot().."/.marumanga"
+end
 function MaruManga:filesystem()
     local ffi=require("ffi")
     pcall(ffi.cdef, "int link(const char *oldpath, const char *newpath); int renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags);")
@@ -816,9 +825,13 @@ function MaruManga:startChapter(manga,chapter,done,item)
             local out={}
             for _,archive_path in ipairs(self.library:archivePathsForManga(current_manga.source_id,current_manga.id)) do
                 if archive_path~=target then
-                    for _,archived in ipairs(self.library:chaptersInArchive(archive_path)) do
-                        local legacy=fs.legacyTargetFor(current_manga.source_id,current_manga.id,archived.id)
-                        if legacy==archive_path and fs.exists(legacy) then out[#out+1]={path=legacy,folder=archived.name or archived.id} end
+                    if self.library:isMangaArchive(archive_path) and fs.exists(archive_path) then
+                        out[#out+1]={path=archive_path,manga_archive=true}
+                    else
+                        for _,archived in ipairs(self.library:chaptersInArchive(archive_path)) do
+                            local legacy=fs.legacyTargetFor(current_manga.source_id,current_manga.id,archived.id)
+                            if legacy==archive_path and fs.exists(legacy) then out[#out+1]={path=legacy,folder=archived.name or archived.id} end
+                        end
                     end
                 end
             end
@@ -912,9 +925,10 @@ function MaruManga:openMangaArchive(manga)
         end
     end
     local file
-    for _,candidate in ipairs(self.library:archivePathsForManga(manga.source_id,manga.id)) do
+    file=self.library.mangaArchiveFor and self.library:mangaArchiveFor(manga.source_id,manga.id)
+    if not file then for _,candidate in ipairs(self.library:archivePathsForManga(manga.source_id,manga.id)) do
         if candidate:sub(-#"/manga.cbz")=="/manga.cbz" then file=candidate; break end
-    end
+    end end
     if not file then return self:notice(_("No downloaded manga CBZ is available yet")) end
     local fs=self:filesystem()
     if not fs.exists(file) then return self:notice(_("Downloaded manga CBZ is missing")) end
@@ -1572,7 +1586,7 @@ function MaruManga:setArchiveBaseline(file,manga,chapter)
             end,600,function(ok,digest,why,runner_error)
                 UIManager:close(loading)
                 if not ok or not digest then return self:notice(runner_error or why or _("Could not verify archive")) end
-                local saved,err=self.library:linkArchive(file,manga,chapter,nil,digest)
+                local saved,err=self.library:linkArchive(file,manga,chapter,nil,digest,self.library:isMangaArchive(file))
                 self:notice(saved and _("Current contents recorded as baseline") or err)
             end)
         end})
@@ -1596,7 +1610,7 @@ function MaruManga:verifyDownload(manga,chapter)
             local fs=self:filesystem(); local backup=file..".broken"
             if fs.exists(backup..".incomplete") then
                 return show(ConfirmBox:new{text=_("An incomplete repair backup exists. Remove the incomplete backup and retry?"),ok_text=_("Remove"),ok_callback=function()
-                    local cleaned,why=fs.cleanupTemporary(manga.source_id,manga.id,chapter.id)
+                    local cleaned,why=fs.cleanupTemporary(manga.source_id,manga.id,chapter.id,manga.title,self.library:mangaArchiveFor(manga.source_id,manga.id))
                     self:notice(cleaned and _("Incomplete backup removed; retry repair") or why)
                 end})
             end
@@ -1624,6 +1638,31 @@ function MaruManga:showDownloads(page)
         end
         group[item.status]=(group[item.status] or 0)+1
     end
+    -- Keep a manga visible after completed queue rows were removed. The
+    -- combined archive and chapter index are the durable download record.
+    if self.library and self.library.data and self.library.data.archives then
+        local fs=self:filesystem()
+        for archive_path,record in pairs(self.library.data.archives) do
+            if type(record)=="table" and type(record.manga)=="table" and fs.exists(archive_path) then
+                local manga=record.manga
+                local key=manga.source_id..":"..manga.id
+                local group=by_key[key]
+                if not group then
+                    group={manga=manga,source_id=manga.source_id,manga_id=manga.id,running=0,queued=0,paused=0,completed=0,failed=0,cancelled=0}
+                    by_key[key]=group; groups[#groups+1]=group
+                end
+                group.archive_paths=group.archive_paths or {}
+                group.archive_paths[#group.archive_paths+1]=archive_path
+                group.archive_chapters=group.archive_chapters or {}
+                for _,chapter in ipairs(self.library:chaptersInArchive(archive_path)) do
+                    if chapter.id then group.archive_chapters[chapter.id]=chapter end
+                end
+                group.archive_count=0
+                for ignored_id in pairs(group.archive_chapters) do group.archive_count=group.archive_count+1 end
+            end
+        end
+    end
+    table.sort(groups,function(a,b) return tostring(a.manga.title or a.manga_id):lower()<tostring(b.manga.title or b.manga_id):lower() end)
     local page_size=6
     local total=#groups
     local page_count=math.max(1,math.ceil(total/page_size))
@@ -1637,6 +1676,7 @@ function MaruManga:showDownloads(page)
         for ignored_index,status in ipairs({"running","queued","paused","completed","failed","cancelled"}) do
             if group[status]>0 then summary[#summary+1]=_(status:gsub("^%l",string.upper)).." "..group[status] end
         end
+        if group.archive_count and group.archive_count>0 then summary[#summary+1]=_("In manga CBZ ")..group.archive_count end
         local current=group
         items[#items+1]={
             text=current.manga.title or current.manga_id,
@@ -1680,16 +1720,148 @@ function MaruManga:showMangaDownloadActions(group,page)
             end})
         end}
     end
+    if group.archive_count and group.archive_count>0 then
+        items[#items+1]={text=_("Delete all downloaded chapters"),icon=path.."images/menu/delete.svg",action=function()
+            if group.running>0 then return self:notice(_("Wait for this manga's active chapter download to finish or cancel it first.")) end
+            show(ConfirmBox:new{text=_("Delete this manga's downloaded CBZ and every chapter in it? Pending chapters for this manga will also be cancelled."),ok_text=_("Delete all"),ok_callback=function()
+                self:deleteMangaDownloads(group)
+            end})
+        end}
+    end
     if #items==0 then items[1]={text=_("No pending downloads")} end
     self:menu(group.manga.title or group.manga_id,items)
+end
+function MaruManga:deleteMangaDownloads(group)
+    if not self.downloads or not self.library then return self:notice(self.download_error or self.library_error) end
+    for item in pairs(self.downloads.active_items or {}) do
+        if item.manga.source_id==group.source_id and item.manga.id==group.manga_id then return self:notice(_("This manga has an active download; cancel it and wait for it to stop first.")) end
+    end
+    self.downloads:cancelManga(group.source_id,group.manga_id)
+    local paths=self.library:archivePathsForManga(group.source_id,group.manga_id)
+    local fs=self:filesystem()
+    for _,archive in ipairs(paths) do
+        if fs.exists(archive) then
+            local removed,err=os.remove(archive)
+            if not removed then return self:notice(err or _("Could not delete manga CBZ")) end
+        end
+        local saved,err=self.library:unlinkArchive(archive)
+        if not saved then return self:notice(err or _("Could not update library metadata")) end
+    end
+    for index=#self.downloads.state.items,1,-1 do
+        local item=self.downloads.state.items[index]
+        if item.manga.source_id==group.source_id and item.manga.id==group.manga_id and item.status~="running" then
+            local removed,err=self.downloads:remove(item)
+            if not removed then return self:notice(err or _("Could not remove chapter download")) end
+        end
+    end
+    self:notice(_("All downloads for this manga were deleted"))
+    self:showDownloads()
+end
+function MaruManga:confirmDeleteDownloadedChapter(item,source_id,manga_id,page)
+    if not self.library then return self:notice(self.library_error) end
+    local active=self.downloads and self.downloads.active_items or {}
+    for queued in pairs(active) do
+        if queued.manga.source_id==source_id and queued.manga.id==manga_id and queued.chapter.id==item.chapter.id then
+            return self:notice(_("This chapter is active; wait for it to stop before deleting it."))
+        end
+    end
+    local fs=self:filesystem()
+    local archive=item.archive_path or self.library:archiveFor(source_id,manga_id,item.chapter.id)
+    if not archive or not fs.exists(archive) then
+        return self:notice(_("The downloaded chapter file is missing. Refresh Downloads to reconcile it."))
+    end
+    local manga=item.manga or (self.library.data.archives[archive] and self.library.data.archives[archive].manga)
+    local combined=self.library:isMangaArchive(archive)
+    if combined then
+        local Builder=dofile(path.."reader/cbz_builder.lua")
+        local folder=Builder.chapterFolder(item.chapter.name or item.chapter.id)
+        for _,chapter in ipairs(self.library:chaptersInArchive(archive)) do
+            if chapter.id~=item.chapter.id and Builder.chapterFolder(chapter.name or chapter.id)==folder then
+                return self:notice(_("Two chapters share the same CBZ title; remove the full manga CBZ to avoid deleting both."))
+            end
+        end
+    end
+    show(ConfirmBox:new{
+        text=combined and (_("Remove ")..(item.chapter.name or item.chapter.id).._(" from the manga CBZ? Other chapters will be kept."))
+            or (_("Delete the downloaded file for ")..(item.chapter.name or item.chapter.id).."?"),
+        ok_text=_("Delete chapter"),
+        ok_callback=function()
+            if not combined then
+                local removed,err=os.remove(archive)
+                if not removed then return self:notice(err or _("Could not delete chapter file")) end
+                local saved,save_err=self.library:unlinkArchive(archive)
+                if not saved then return self:notice(save_err or _("Could not update library metadata")) end
+                if not item.archived_only then self.downloads:remove(item) end
+                self:notice(_("Downloaded chapter deleted"))
+                return self:showMangaDownloads(source_id,manga_id,page,true)
+            end
+            local remaining_pages=0
+            for _,chapter in ipairs(self.library:chaptersInArchive(archive)) do
+                if chapter.id~=item.chapter.id then remaining_pages=remaining_pages+(tonumber(chapter.page_count) or 0) end
+            end
+            local started,err=pcall(function()
+                self:runner().run(function()
+                    local protected,removed,count,digest_or_error=pcall(function()
+                        local Builder=dofile(path.."reader/cbz_builder.lua")
+                        local ok,remaining=Builder.removeChapter(require("ffi/archiver"),fs,archive,item.chapter.name or item.chapter.id)
+                        if not ok then return false,nil,remaining end
+                        if remaining==0 then
+                            local deleted,delete_error=fs.remove(archive)
+                            if not deleted then return false,nil,delete_error or _("Could not remove empty manga CBZ") end
+                            return true,0
+                        end
+                        local digest,digest_error=FileDigest.hash(archive,require("ffi/sha2").sha256)
+                        if not digest then return false,nil,digest_error end
+                        return true,remaining,digest
+                    end)
+                    if not protected then return true,false,nil,tostring(removed) end
+                    return true,removed,count,digest_or_error
+                end,600,function(worker_ok,success,count,digest_or_error,runner_error)
+                    if not worker_ok then return self:notice(runner_error or _("Chapter deletion was interrupted")) end
+                    if success~=true then return self:notice(digest_or_error or runner_error or _("Could not rebuild manga CBZ")) end
+                    local saved,save_error
+                    if count==0 then saved,save_error=self.library:unlinkArchive(archive)
+                    else saved,save_error=self.library:removeChapterFromArchive(archive,item.chapter.id,digest_or_error,remaining_pages) end
+                    if not saved then return self:notice(save_error or _("Could not update manga metadata")) end
+                    if not item.archived_only then
+                        for index=#self.downloads.state.items,1,-1 do
+                            local queued=self.downloads.state.items[index]
+                            if queued.manga.source_id==source_id and queued.manga.id==manga_id and queued.chapter.id==item.chapter.id and queued.status~="running" then
+                                self.downloads:remove(queued)
+                            end
+                        end
+                    end
+                    self:notice(_("Downloaded chapter deleted"))
+                    self:showMangaDownloads(source_id,manga_id,page,true)
+                end)
+            end)
+            if not started then self:notice(tostring(err)) end
+        end,
+    })
 end
 function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
     if not self.downloads then return self:notice(self.download_error) end
     local entries,manga={},nil
+    local entry_ids={}
     for _,item in ipairs(self.downloads.state.items) do
         if item.manga.source_id==source_id and item.manga.id==manga_id then
             manga=manga or item.manga
             entries[#entries+1]=item
+            entry_ids[item.chapter.id]=true
+        end
+    end
+    local archive_paths=self.library and self.library:archivePathsForManga(source_id,manga_id) or {}
+    local fs=self:filesystem()
+    for _,archive_path in ipairs(archive_paths) do
+        if fs.exists(archive_path) then
+            local record=self.library.data.archives[archive_path]
+            manga=manga or (type(record)=="table" and record.manga)
+            for _,chapter in ipairs(self.library:chaptersInArchive(archive_path)) do
+                if not entry_ids[chapter.id] then
+                    local synthetic={manga=manga,chapter=chapter,status="completed",archived_only=true,archive_path=archive_path}
+                    entries[#entries+1]=synthetic; entry_ids[chapter.id]=true
+                end
+            end
         end
     end
     if not manga then return self:showDownloads() end
@@ -1710,7 +1882,16 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
     local last=math.min(total,first+page_size-1)
     for index=first,last do
         local current=entries[index]
-        local row={text=current.chapter.name or current.chapter.id,icon=path.."images/menu/chapter.svg",action=function()
+        local row={text=current.chapter.name or current.chapter.id,icon=path.."images/menu/chapter.svg",hold_callback=function()
+            if current.status=="completed" then return self:confirmDeleteDownloadedChapter(current,source_id,manga_id,page) end
+            self:menu(current.chapter.name or current.chapter.id,{
+                {text=_("Remove from list"),icon=path.."images/menu/delete.svg",action=function()
+                    local ok,err=self.downloads:remove(current)
+                    self:notice(ok and _("Removed") or err)
+                    self:showMangaDownloads(source_id,manga_id,page,true)
+                end},
+            })
+        end,action=function()
             local choices={}
             if current.status=="failed" or current.status=="cancelled" then
                 choices[#choices+1]={text=_("Retry"),icon=path.."images/menu/refresh.svg",action=function() local ok,err=self.downloads:retry(current); self:notice(ok and _("Queued") or err); self:showMangaDownloads(source_id,manga_id,page,true) end}
@@ -1718,7 +1899,7 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
                     show(ConfirmBox:new{text=_("Remove incomplete files for this chapter?"),ok_text=_("Remove"),ok_callback=function()
                         local active=self.downloads.active
                         if active and active.manga.source_id==source_id and active.manga.id==manga_id and active.chapter.id==current.chapter.id then return self:notice(_("This chapter is in use")) end
-                        local fs=self:filesystem(); local ok,err=fs.cleanupTemporary(source_id,manga_id,current.chapter.id)
+                        local fs=self:filesystem(); local ok,err=fs.cleanupTemporary(source_id,manga_id,current.chapter.id,current.manga.title,self.library:mangaArchiveFor(source_id,manga_id))
                         self:notice(ok and _("Incomplete files removed") or err)
                     end})
                 end}
@@ -1734,21 +1915,9 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
             elseif current.status=="completed" then
                 choices[#choices+1]={text=_("Open downloaded file"),icon=path.."images/menu/book.svg",action=function() self:openDownloaded(current.manga,current.chapter) end}
                 choices[#choices+1]={text=_("Verify downloaded file"),icon=path.."images/menu/verify.svg",action=function() self:verifyDownload(current.manga,current.chapter) end}
-                choices[#choices+1]={text=_("Delete manga CBZ (all chapters)"),icon=path.."images/menu/delete.svg",action=function()
-                    show(ConfirmBox:new{text=_("Delete the manga's combined CBZ and all chapters inside it?"),ok_text=_("Delete"),ok_callback=function()
-                        local active=self.downloads.active
-                        if active and active.manga.source_id==source_id and active.manga.id==manga_id then return self:notice(_("This manga archive is in use")) end
-                        local fs=self:filesystem(); local target=self.library:archiveFor(source_id,manga_id,current.chapter.id); local err
-                        if not target then target,err=fs.targetFor(source_id,manga_id,current.chapter.id) end
-                        if not target then return self:notice(err) end
-                        local removed,why=os.remove(target); if not removed then return self:notice(why or _("Could not delete manga CBZ")) end
-                        local ok,save_error=self.library:unlinkArchive(target); if not ok then return self:notice(save_error) end
-                        for i=#self.downloads.state.items,1,-1 do local queued=self.downloads.state.items[i]; if queued.status=="completed" and queued.manga.source_id==source_id and queued.manga.id==manga_id then self.downloads:remove(queued) end end
-                        self:notice(_("Manga CBZ deleted")); self:showDownloads()
-                    end})
-                end}
+                choices[#choices+1]={text=_("Delete this chapter"),icon=path.."images/menu/delete.svg",action=function() self:confirmDeleteDownloadedChapter(current,source_id,manga_id,page) end}
             end
-            if current.status~="running" and current.status~="queued" then
+            if not current.archived_only and current.status~="running" and current.status~="queued" then
                 choices[#choices+1]={text=_("Remove from list"),icon=path.."images/menu/delete.svg",action=function() local ok,err=self.downloads:remove(current); self:notice(ok and _("Removed") or err); self:showMangaDownloads(source_id,manga_id,page,true) end}
             end
             if current.error then choices[#choices+1]={text=current.error} end
@@ -1850,7 +2019,7 @@ function MaruManga:showUpdates()
                             local active=false
                             for queued in pairs(self.downloads and self.downloads.active_items or {}) do if queued.manga.source_id==item.manga.source_id and queued.chapter.id==item.chapter.id then active=true; break end end
                             if active then return self:notice(_("This chapter is in use")) end
-                            local ok,why=fs.cleanupTemporary(item.manga.source_id,item.manga.id,item.chapter.id)
+                            local ok,why=fs.cleanupTemporary(item.manga.source_id,item.manga.id,item.chapter.id,item.manga.title,self.library:mangaArchiveFor(item.manga.source_id,item.manga.id))
                             self:notice(ok and _("Incomplete files removed") or why)
                         end})
                     end}
@@ -1995,7 +2164,8 @@ function MaruManga:storageSettings(replace_page)
     local default_path=DataStorage:getFullDataDir().."/marumanga"
     local current_path=self:downloadRoot()
     local items={
-        {maru_key=_("Folder"),maru_value=current_path},
+        {maru_key=_("CBZ folder"),maru_value=current_path},
+        {text=_("CBZ files go here; cache and covers are kept in .marumanga/")},
         {text=_("Choose folder"),maru_icon="folder",action=function() self:chooseDownloadFolder() end},
     }
     if self.config.data.download_dir then
@@ -2089,23 +2259,19 @@ function MaruManga:confirmUninstall()
     })
 end
 function MaruManga:chooseUninstallData()
-    local TextBoxWidget=require("ui/widget/textboxwidget")
-    local Screen=require("device").screen
     local dialog
-    dialog=ButtonDialog:new{
-        title=_("Uninstall MaruManga Downloader"),
-        _added_widgets={TextBoxWidget:new{
-            text=_("Keep data preserves the library, settings, cache, and downloaded manga. Uninstall removes MaruManga's settings and its manga and cache folders."),
-            width=math.floor(Screen:getWidth()*0.76),padding=0,
-        }},
-        dismissable=false,
-        buttons={
-            {{text=_("Cancel"),callback=function() UIManager:close(dialog) end}},
-            {{text=_("Keep data"),callback=function() UIManager:close(dialog); self:runUninstall(false) end}},
-            {{text=_("Uninstall"),callback=function() UIManager:close(dialog); self:runUninstall(true) end}},
-        },
-    }
-    show(dialog)
+    local function close_dialog()
+        if self.main_menu and self.main_menu.visible and self.main_menu.current_page then
+            self.main_menu:goBack()
+        elseif dialog and dialog~=self.main_menu then
+            UIManager:close(dialog)
+        end
+    end
+    dialog=self:menu(_("Uninstall · Choose data"),{
+        {text=_("Cancel"),icon=path.."images/menu/close.svg",action=close_dialog},
+        {text=_("Keep library, settings, cache and downloaded manga"),icon=path.."images/menu/library.svg",action=function() self:runUninstall(false) end},
+        {text=_("Uninstall and delete MaruManga data"),icon=path.."images/menu/delete.svg",action=function() self:runUninstall(true) end},
+    })
 end
 function MaruManga:runUninstall(remove_data)
     local loading=loadingMessage(remove_data and _("Removing MaruManga and its data…") or _("Removing MaruManga…"))
@@ -2113,19 +2279,41 @@ function MaruManga:runUninstall(remove_data)
     local loading_open=true
     local function finish(ok,result,why,runner_error)
         if loading_open then loading_open=false; UIManager:close(loading) end
-        if not ok then return self:notice(result or why or runner_error or _("Could not uninstall MaruManga Downloader")) end
+        if not ok or result~=true then
+            local failure=type(result)=="string" and result or why or runner_error or _("Could not uninstall MaruManga Downloader")
+            return self:notice(failure)
+        end
         self:notice(remove_data and _("MaruManga and its data were removed. Restart KOReader to finish uninstalling.") or _("MaruManga was removed. Its data was kept. Restart KOReader to finish uninstalling."))
         UIManager:askForRestart()
     end
     local plugin_dir=path:gsub("[/\\]+$","")
     local settings_path=DataStorage:getSettingsDir().."/marumanga.lua"
     local download_root=self:downloadRoot()
+    local downloaded_archives={}
+    for archive in pairs(self.library and self.library.data.archives or {}) do downloaded_archives[#downloaded_archives+1]=archive end
     local started,err=pcall(function()
         self:runner().run(function()
-            return Uninstaller.uninstall({
-                lfs=require("libs/libkoreader-lfs"),plugin_path=plugin_dir,
-                remove_data=remove_data,settings_path=settings_path,download_root=download_root,
-            })
+            local task_ok,result=pcall(function()
+                local lfs=require("libs/libkoreader-lfs")
+                local removed,remove_error=Uninstaller.uninstall({
+                    lfs=lfs,plugin_path=plugin_dir,
+                    remove_data=remove_data,settings_path=settings_path,download_root=download_root,
+                    downloaded_archives=downloaded_archives,
+                })
+                if not removed then return remove_error or _("Could not uninstall MaruManga Downloader") end
+                if remove_data then
+                    for _,archive in ipairs(downloaded_archives) do
+                        if lfs.symlinkattributes(archive,"mode") then return _("Downloaded manga file could not be removed") end
+                    end
+                    for _,suffix in ipairs({"", ".old", ".new"}) do
+                        if lfs.symlinkattributes(settings_path..suffix,"mode") then return _("MaruManga settings could not be removed") end
+                    end
+                end
+                if lfs.symlinkattributes(plugin_dir,"mode") then return _("MaruManga plugin folder could not be removed") end
+                return true
+            end)
+            if not task_ok then return tostring(result) end
+            return result
         end,600,finish)
     end)
     if not started then finish(false,nil,nil,tostring(err)) end

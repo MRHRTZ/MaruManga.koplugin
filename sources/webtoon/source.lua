@@ -16,6 +16,14 @@ function Source.new(profile,parser,transport,html)
     assert((profile.id=="webtoon" or profile.id=="webtoon_id") and profile.base_url==BASE)
     local expected_locale=profile.id=="webtoon_id" and "id" or "en"
     assert(locale_for(profile)==expected_locale)
+    -- Keep older installed repository catalogs compatible with the current
+    -- episode markup, which nests title, date and likes under one anchor.
+    profile.chapter_title_selector=profile.chapter_title_selector or ".subj"
+    -- WEBTOON uses different card classes on the ranking and update pages
+    -- than on search. Keep all three selectors as data fallbacks so every
+    -- public listing can share the profile-based parser.
+    profile.list_link_selector=nil
+    profile.list_link_selectors={"a._ranking_title_a","a._originals_title_a","a._card_item"}
     local self=Generic.new(profile,parser,transport)
     self.html=assert(html)
     self.locale=expected_locale
@@ -41,6 +49,14 @@ function Source:getChapterList(manga,page,callback,order)
             return an>bn
         end)
         callback({items=items,page=page,has_next=next_page(self.html,body)})
+    end)
+end
+function Source:getMangaDetails(manga,callback)
+    return Generic.getMangaDetails(self,manga,function(detail,err)
+        if detail and type(detail.author)=="string" then
+            detail.author=detail.author:gsub("[Aa]uthor%s+[Ii]nfo",""):gsub("%s+"," "):gsub("^%s+",""):gsub("%s+$","")
+        end
+        callback(detail,err)
     end)
 end
 return Source

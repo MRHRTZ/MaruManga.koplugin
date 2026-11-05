@@ -162,7 +162,7 @@ assert(add and chapters and download_all); assert(detail.item_table[6]==download
 assert(detail.item_table[1].maru_key=="Author" and detail.item_table[1].maru_value=="Unknown")
 local has_cover_action=false; for _,item in ipairs(detail.item_table) do if type(item.text)=="string" and item.text:lower():find("view cover",1,true) then has_cover_action=true end end; assert(not has_cover_action)
 source.getChapterList=function(_,manga,page,callback) callback({items={{id="chapter-1",manga_id=manga.id,name="Chapter 1"}},has_next=false}) end
-chapters.action(); local list=widgets[#widgets]; assert(list.title:match("Series") and #list.item_table>=2 and list.page_limit==8)
+chapters.action(); local list=widgets[#widgets]; assert(list.title:match("Series") and #list.item_table>=2 and list.page_limit==3)
 plugin:loadList("Popular",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
 local popular=widgets[#widgets]; assert(popular.title=="Popular" and popular.item_table[1].maru_manga.title=="Series" and popular.page_limit==4)
 results.items[1].latest_chapter="Chapter 23"

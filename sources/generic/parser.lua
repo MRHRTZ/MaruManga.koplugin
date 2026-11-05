@@ -123,7 +123,8 @@ function Parser.new(html,resolve,clean,profile,digest)
         for _,node in ipairs(all(doc,profile.chapter_selector)) do
             local link=profile.chapter_link_selector and first(node,profile.chapter_link_selector) or node
             local href=link and absolute(resolve,base,link.attributes[profile.chapter_attribute or "href"])
-            local name=text(link,clean)
+            local title_node=profile.chapter_title_selector and first(node,profile.chapter_title_selector)
+            local name=text(title_node or link,clean)
             if href and name~="" then
                 local number=name:lower():match("chapter%s*(%d+%.?%d*)") or name:lower():match("ch%.?%s*(%d+%.?%d*)")
                 items[#items+1]={id=digest(href),manga_id=manga.id,name=name,chapter_number=tonumber(number),url=href}

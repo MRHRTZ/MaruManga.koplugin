@@ -261,13 +261,14 @@ function M.new(options)
         if page_index==1 and (page.hero or page.hero_icon) then
             local visual
             if page.hero then
-                local ok,image=pcall(ImageWidget.new,ImageWidget,{file=page.hero,width=Screen:scaleBySize(150),height=Screen:scaleBySize(190),alpha=true,scale_factor=0})
+                local ok,image=pcall(ImageWidget.new,ImageWidget,{file=page.hero,width=Screen:scaleBySize(118),height=Screen:scaleBySize(124),alpha=true,scale_factor=0})
                 if ok then visual=image end
             end
             if not visual then visual=ImageWidget:new{file=icon_dir.."details.svg",width=Screen:scaleBySize(72),height=Screen:scaleBySize(72),alpha=true} end
-            -- Reserve the full image height so the cover does not overlap the
-            -- page title or the description divider on tall manga covers.
-            rows[#rows+1]=CenterContainer:new{dimen=Geom:new{w=inner_width,h=Screen:scaleBySize(194)},visual}
+            -- Keep tall covers fully inside a compact row. Oversized custom
+            -- dialogs trigger ButtonDialog's grid-scroll path, which assumes
+            -- native button rows and can crash on mixed custom widgets.
+            rows[#rows+1]=CenterContainer:new{dimen=Geom:new{w=inner_width,h=Screen:scaleBySize(132)},visual}
         end
         if page_index==1 and page.description then
             rows[#rows+1]=UnderlineContainer:new{
@@ -283,7 +284,7 @@ function M.new(options)
             local description_face=Font:getFace("infofont",18)
             local measured=TextBoxWidget:new{text=page.description,face=description_face,width=description_width,padding=0}
             local natural_height=measured:getSize().h
-            local description_height=math.min(natural_height,Screen:scaleBySize(108))
+            local description_height=math.min(natural_height,Screen:scaleBySize(84))
             local description_widget=natural_height>description_height and ScrollTextWidget:new{
                 text=page.description,face=description_face,width=description_width,height=description_height,scroll_by_pan=true,dialog=dialog,
             } or measured
