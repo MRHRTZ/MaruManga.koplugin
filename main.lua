@@ -163,7 +163,7 @@ local function loadingMessage(text)
     end
     return message
 end
-local PLUGIN_VERSION="0.2.5"
+local PLUGIN_VERSION="0.2.6"
 local PLUGIN_LAST_UPDATE="2026-11-05"
 function MaruManga:init()
     self.ui.menu:registerToMainMenu(self)
@@ -1949,7 +1949,7 @@ function MaruManga:networkSettings(replace_page)
     self:menu(_("Network"),{
         {text=_("Connection settings"),action=function() self:networkValuesSettings() end},
         {text=_("DNS resolver: ")..(labels[mode] or labels.auto),maru_icon="source",action=function() self:dnsSettings() end},
-    },nil,nil,nil,replace_page)
+    },nil,nil,replace_page)
 end
 function MaruManga:downloadSettings(replace_page)
     if not self.config then return self:notice(self.config_error) end
@@ -1963,7 +1963,7 @@ function MaruManga:downloadSettings(replace_page)
             end}}}}
             show(dialog); dialog:onShowKeyboard()
         end},
-    },nil,nil,nil,replace_page)
+    },nil,nil,replace_page)
 end
 function MaruManga:storageSettings(replace_page)
     if not self.config then return self:notice(self.config_error) end
@@ -1980,7 +1980,7 @@ function MaruManga:storageSettings(replace_page)
             self:storageSettings(true)
         end}
     end
-    self:menu(_("Storage"),items,nil,nil,nil,replace_page)
+    self:menu(_("Storage"),items,nil,nil,replace_page)
 end
 function MaruManga:chooseDownloadFolder()
     if not self.config then return self:notice(self.config_error) end
@@ -2045,7 +2045,7 @@ function MaruManga:openSettings()
         {text=_("Chapter language"),action=function() self:settings() end},
         {text=_("Network"),group_end=true,action=function() self:networkSettings() end},
         {text=_("Download"),action=function() self:downloadSettings() end},
-        {text=_("Storage"),group_end=true,action=function() self:storageSettings() end},
+        {text=_("Storage"),maru_icon="folder",group_end=true,action=function() self:storageSettings() end},
         {text=_("Uninstall"),action=function() self:confirmUninstall() end},
     })
 end
