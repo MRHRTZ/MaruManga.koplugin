@@ -265,7 +265,9 @@ function M.new(options)
                 if ok then visual=image end
             end
             if not visual then visual=ImageWidget:new{file=icon_dir.."details.svg",width=Screen:scaleBySize(72),height=Screen:scaleBySize(72),alpha=true} end
-            rows[#rows+1]=CenterContainer:new{dimen=Geom:new{w=inner_width,h=Screen:scaleBySize(132)},visual}
+            -- Reserve the full image height so the cover does not overlap the
+            -- page title or the description divider on tall manga covers.
+            rows[#rows+1]=CenterContainer:new{dimen=Geom:new{w=inner_width,h=Screen:scaleBySize(194)},visual}
         end
         if page_index==1 and page.description then
             rows[#rows+1]=UnderlineContainer:new{
