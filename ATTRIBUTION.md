@@ -1,0 +1,7 @@
+# Attribution
+
+MaruManga uses KOReader's plugin, UI, LuaSettings, networking, and libarchive interfaces at runtime. KOReader and its bundled components have their own licenses; see https://github.com/koreader/koreader and the distribution's license files. The optional HTML adapters use KOReader's bundled lua-htmlparser, available at https://github.com/msva/lua-htmlparser under its stated LGPL terms. These dependencies are not bundled here.
+
+MangaDex metadata and page endpoints are provided by MangaDex (https://mangadex.org/). Chapter listings identify scanlation groups where supplied by its API. Users must comply with MangaDex's current acceptable-use policy and the terms of each configured source.
+
+The source interface is inspired by Mihon and public extension work, including https://github.com/keiyoushi/extensions-source. No Kotlin extension or JVM runtime is bundled, and this project does not claim Mihon extension compatibility. The Madara profile adapts lazy-image attribute selection and non-AJAX pagination behavior from `MadaraBase.kt` and `MadaraNoAjax.kt` in Keiyoushi extensions-source, revision `726723b96a1b2a74f0ad000dacaa50f080de5e26`, under Apache License 2.0. The Komiku adapter selectively ports public endpoint layout, selectors, page filtering, Indonesian language header, and referer behavior from `src/id/komiku/.../Komiku.kt`, also under Apache License 2.0. The applicable Apache License 2.0 text is included in `LICENSE-APACHE-2.0`. The code is implemented natively in Lua; no Kotlin binaries are included.
