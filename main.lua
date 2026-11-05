@@ -147,9 +147,20 @@ local function loadingMessage(text)
     local message=InfoMessage:new{text=text,timeout=nil,dismissable=false,show_icon=false,flush_events_on_show=true}
     message.keep_radius=true
     if message.movable and message.movable[1] then message.movable[1].radius=require("device").screen:scaleBySize(12) end
+    function message:updateText(updated_text)
+        self.text=updated_text
+        -- InfoMessage builds HorizontalGroup(image, span, TextBoxWidget).
+        -- Reuse its TextBoxWidget so sequential source progress updates do
+        -- not close and remount the modal on every response.
+        local text_widget=self.movable and self.movable[1] and self.movable[1][1] and self.movable[1][1][3]
+        if not text_widget or type(text_widget.setText)~="function" then return false end
+        text_widget:setText(updated_text)
+        UIManager:setDirty(self,function() return "ui",self.movable.dimen end)
+        return true
+    end
     return message
 end
-local PLUGIN_VERSION="0.2.1"
+local PLUGIN_VERSION="0.2.2"
 local PLUGIN_LAST_UPDATE="2026-11-05"
 function MaruManga:init()
     self.ui.menu:registerToMainMenu(self)
@@ -266,7 +277,6 @@ function MaruManga:source(id)
         elseif config.kind=="webtoon" then
             source_class=Webtoon
         elseif config.kind=="westmanga" then
-            parsed=nil
             source_class=WestManga
         elseif config.kind=="mangarock" then
             parsed=MangaRockParser.new(html,url.absolute,util.htmlToPlainText,profile,digest)
@@ -275,7 +285,7 @@ function MaruManga:source(id)
         local ok,result
         if config.kind=="webtoon" then ok,result=pcall(source_class.new,profile,parsed,transport,html)
         else ok,result=pcall(source_class.new,profile,parsed,transport) end
-        if not ok then self:notice(_("Invalid source configuration")); return end
+        if not ok then self:notice(_("Invalid source configuration")..": "..tostring(result)); return end
         source=result
     end
     self.manga_sources[id]=source
@@ -548,9 +558,13 @@ function MaruManga:searchAllManga(query,page)
     local ok,err=pcall(AllSourceSearch.run,enabled,query,page,function(profile) return self:source(profile.id) end,
         function(task) UIManager:nextTick(task) end,
         function(index,total)
-            closeLoading()
-            loading=loadingMessage(_("Searching manga...").." ("..index.."/"..total..")")
-            show(loading)
+            local message=_("Searching manga...").." ("..index.."/"..total..")"
+            if loading then
+                loading:updateText(message)
+            else
+                loading=loadingMessage(message)
+                show(loading)
+            end
         end,finish)
     if not ok then
         closeLoading()
@@ -1207,7 +1221,7 @@ function MaruManga:installCatalogSource(repo,entry)
     local existing=self:profile(entry.id)
     local origin=repo.url or "builtin"
     if existing and existing.repository_url~=origin then return self:notice(_("A source with this ID is already installed")) end
-    local profile={id=entry.id,name=entry.name,base_url=entry.base_url,icon_url=entry.icon_url,kind=entry.adapter,languages=entry.languages,enabled=not existing or existing.enabled~=false,repository_url=origin,repository_version=entry.version}
+    local profile={id=entry.id,name=entry.name,base_url=entry.base_url,icon_url=entry.icon_url,kind=entry.adapter,languages=entry.languages,nsfw=entry.nsfw==true,enabled=not existing or existing.enabled~=false,repository_url=origin,repository_version=entry.version}
     for k,v in pairs(entry.profile or {}) do profile[k]=v end
     if existing then
         local index; for i,value in ipairs(self.config.data.profiles) do if value==existing then index=i; break end end
@@ -2075,7 +2089,19 @@ function MaruManga:withDiscoverSource(label,callback,all_callback,replace_page)
     if #sources==1 and not all_callback then return callback(sources[1].id) end
     for _,entry in ipairs(sources) do
         local source=entry
-        local row={text=source.name or source.id,action=function() callback(source.id) end}
+        local label=source.name or source.id
+        if type(source.languages)=="table" and #source.languages>0 then label=label.." "..languageLabel(source.languages) end
+        local nsfw=source.nsfw==true
+        if not nsfw and self.repositories then
+            for _,repo in ipairs(self.repositories:list()) do
+                for _,catalog_entry in ipairs(repositorySources(repo)) do
+                    if catalog_entry.id==source.id then nsfw=catalog_entry.nsfw==true; break end
+                end
+                if nsfw then break end
+            end
+        end
+        if nsfw then label=label.." [NSFW]" end
+        local row={text=label,action=function() callback(source.id) end}
         local icon_file=bundledSourceIcon(source) or self:findCachedSourceIcon(source)
         if icon_file then
             local Screen=require("device").screen

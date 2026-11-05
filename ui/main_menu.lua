@@ -31,7 +31,10 @@ function MainRow:init()
     local leading_width = (self.key or self.no_icon) and 0 or (self.state_width or icon_size)
     local state=self.state
     if not state and self.image then
-        local ok,image=pcall(ImageWidget.new,ImageWidget,{file=self.image,width=Screen:scaleBySize(42),height=Screen:scaleBySize(58),alpha=true,scale_factor=0})
+        -- Manga covers may be large source images. Do not put their full-size
+        -- decoded buffers in KOReader's shared image LRU; repeated discovery
+        -- searches can otherwise exhaust its small cache on e-ink devices.
+        local ok,image=pcall(ImageWidget.new,ImageWidget,{file=self.image,width=Screen:scaleBySize(42),height=Screen:scaleBySize(58),alpha=true,scale_factor=0,file_do_cache=false})
         if ok then state=image end
     end
     if not state and not self.key and not self.no_icon then state=ImageWidget:new{file=self.icon,width=icon_size,height=icon_size,alpha=true} end
@@ -135,8 +138,8 @@ function MangaCard:init()
     self.ges_events={TapSelect={GestureRange:new{ges="tap",range=self.dimen}}}
     local cover_h=Screen:scaleBySize(150)
     local file=self.image or self.icon_dir.."fallback-cover.svg"
-    local ok,image=pcall(ImageWidget.new,ImageWidget,{file=file,width=self.width-Screen:scaleBySize(14),height=cover_h,alpha=true,scale_factor=0})
-    if not ok then image=ImageWidget:new{file=self.icon_dir.."fallback-cover.svg",width=self.width-Screen:scaleBySize(14),height=cover_h,alpha=true,scale_factor=0} end
+    local ok,image=pcall(ImageWidget.new,ImageWidget,{file=file,width=self.width-Screen:scaleBySize(14),height=cover_h,alpha=true,scale_factor=0,file_do_cache=false})
+    if not ok then image=ImageWidget:new{file=self.icon_dir.."fallback-cover.svg",width=self.width-Screen:scaleBySize(14),height=cover_h,alpha=true,scale_factor=0,file_do_cache=false} end
     local function compact(value,limit)
         value=tostring(value or "")
         if #value>limit then return value:sub(1,limit-1).."…" end
