@@ -1,7 +1,7 @@
 -- Repository catalogs are data; only bundled adapter implementations are executable.
 local Repos={}; Repos.__index=Repos
 local DEFAULT_URL="https://raw.githubusercontent.com/MRHRTZ/maru-manga-repository/refs/heads/master/metadata.json"
-local builtin={id="builtin",name="MaruManga Repository",author="MRHRTZ",builtin=true,url=DEFAULT_URL,catalog={schema_version=1,id="maru-official",name="MaruManga Repository",author="MRHRTZ",version="1.23.2",status="OK",sources={
+local builtin={id="builtin",name="Maru Manga Repositories",author="MRHRTZ",builtin=true,url=DEFAULT_URL,catalog={schema_version=1,id="maru-official",name="Maru Manga Repositories",author="MRHRTZ",version="1.23.3",status="OK",sources={
     {id="komiku",name="Komiku",version="3.0.0",adapter="komiku",base_url="https://komiku.org",languages={"id"},profile={
         api_url="https://api.komiku.org",image_hosts={"thumbnail.komiku.to","thumbnail.komiku.org","img.komiku.org","image.komiku.org","update.komiku.org","komikid.org"},
         list_selector="div.bge",list_link_selector="a",list_title_selector="h3",list_cover_selector="img",title_selector="h1 span[itemprop=\"name\"]",description_selector="p.desc",
@@ -124,7 +124,7 @@ local function validate(catalog)
 end
 local function merge_builtin_fallback(repo,catalog)
     if not repo or repo.url~=DEFAULT_URL or catalog.id~="maru-official" then return catalog end
-    catalog.name="MaruManga Repository"
+    catalog.name="Maru Manga Repositories"
 local fallback=assert(validate(builtin.catalog))
     local present={}; local bundled={}
     for _,entry in ipairs(fallback.sources) do bundled[entry.id]=entry end
@@ -157,8 +157,8 @@ function Repos.open(store)
             if not catalog or catalog.id~="maru-official" then return nil,"Invalid default repository catalog" end
             default.catalog=merge_builtin_fallback(default,catalog)
         else default.catalog=assert(validate(builtin.catalog)) end
-        default.title=default.title or "MaruManga Repository"
-        default.catalog.name="MaruManga Repository"
+        if default.title==nil or default.title=="MaruManga Repository" or default.title=="Maru Manga Sources" then default.title="Maru Manga Repositories" end
+        default.catalog.name="Maru Manga Repositories"
     else
         default={url=DEFAULT_URL,builtin=true,catalog=assert(validate(builtin.catalog))}
         for i=#raw.items,1,-1 do
@@ -173,8 +173,8 @@ function Repos.open(store)
     end
     if type(default)=="table" then
         default.builtin=true
-        default.title=default.title or "MaruManga Repository"
-        default.catalog.name="MaruManga Repository"
+        if default.title==nil or default.title=="MaruManga Repository" or default.title=="Maru Manga Sources" then default.title="Maru Manga Repositories" end
+        default.catalog.name="Maru Manga Repositories"
     end
     return setmetatable({store=store,data=raw},Repos)
 end
