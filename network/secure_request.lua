@@ -129,7 +129,7 @@ function M.fetch(url, dependencies)
     end
     local success, code, headers = http.request({url=url, port=port, method=method, source=source, create=create, sink=sink, redirect=false, headers=request_headers})
     if not success then return nil, nil, tostring(code or "Connection failed") end
-    if dependencies.write then return tonumber(code), {size=total, prefix=prefix, content_type=headers and headers["content-type"], cached=headers and type(headers["x-cache"])=="string" and headers["x-cache"]:upper():match("^HIT")~=nil or false} end
+    if dependencies.write then return tonumber(code), {size=total, prefix=prefix, content_type=headers and headers["content-type"], cached=headers and type(headers["x-cache"])=="string" and headers["x-cache"]:upper():match("^HIT")~=nil or false}, nil, headers end
     return tonumber(code), table.concat(chunks), nil, headers
 end
 return M

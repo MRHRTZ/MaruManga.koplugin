@@ -215,7 +215,7 @@ function M.new(options)
     local function render_page(page)
         local rows={}
         local items=page.items or {}
-        local page_limit=page.page_limit or (page.grid and 6) or (items[1] and items[1].maru_title and 3 or dialog.page_limit)
+        local page_limit=page.page_limit or (page.grid and 4) or (items[1] and items[1].maru_title and 3 or dialog.page_limit)
         local page_count=math.max(1,math.ceil(#items/page_limit))
         local page_index=math.max(1,math.min(page.page_index or 1,page_count))
         page.page_index=page_index

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "version": "0.2.2",
-  "tag": "v0.2.2",
+  "version": "0.2.5",
+  "tag": "v0.2.5",
   "release_url": "https://github.com/MRHRTZ/MaruManga.koplugin/releases/latest",
-  "download_url": "https://github.com/MRHRTZ/MaruManga.koplugin/releases/download/v0.2.2/marumanga.koplugin.v0.2.2.zip",
+  "download_url": "https://github.com/MRHRTZ/MaruManga.koplugin/releases/download/v0.2.5/marumanga.koplugin.v0.2.5.zip",
   "changelog_url": "https://github.com/MRHRTZ/MaruManga.koplugin/releases"
 }

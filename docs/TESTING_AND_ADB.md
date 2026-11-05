@@ -2,7 +2,7 @@
 
 ## Automated tests
 
-DNS settings are plugin-local. In KOReader, open **Tools → MaruManga Downloader → Settings → Network and storage → DNS resolver** to choose Auto, Google, Cloudflare or Other. Selecting Other opens **Connection and download settings**; enter the resolver's IPv4 address in **Manual DNS IPv4** and save. The settings validator rejects invalid IPv4 addresses. Auto restores the device resolver. Google, Cloudflare and manual DNS use direct UDP on port 53 for Maru Manga requests only; choose Auto on networks that block custom DNS. Android UI verification covered selecting Other, saving `9.9.9.9`, returning to the settings panel without a crash, and restoring Auto. A live DNS query through a public resolver remains an integration check.
+Settings are grouped into **Chapter language**, **Network**, **Download**, **Storage**, and **Uninstall**. DNS settings are plugin-local. Open **Settings → Network → DNS resolver** to choose Auto, Google, Cloudflare or Other. Selecting Other asks for the resolver IPv4 address. Auto restores the device resolver. Google, Cloudflare and manual DNS use direct UDP on port 53 for MaruManga requests only; choose Auto on networks that block custom DNS. **Settings → Download** controls concurrent downloads (default 2). **Settings → Storage** displays the active folder, opens KOReader's folder picker, and offers Restore default folder when a custom path is set. The default is `marumanga` under KOReader's data directory. Android verification covered the DNS selection and the folder picker/default path; a live DNS query through a public resolver remains an integration check.
 
 Run the Lua test suite from the plugin directory in an environment with LuaJIT and KOReader-compatible bundled dependencies:
 
@@ -40,7 +40,7 @@ adb -s emulator-5556 shell am force-stop org.koreader.launcher
 adb -s emulator-5556 shell monkey -p org.koreader.launcher 1
 ```
 
-If the device uses another KOReader package or storage location, inspect `adb shell pm list packages | grep koreader` and KOReader's settings rather than guessing. Never push into KOReader's application/core directories.
+If the device uses another KOReader package or storage location, inspect `adb shell pm list packages | Select-String koreader` and KOReader's settings rather than guessing. Never push into KOReader's application/core directories.
 
 ## UI Automator-first inspection
 
@@ -77,5 +77,6 @@ When a KOReader log path differs on a device, inspect its data directory. Redact
 10. For Popular, Latest, Search and bulk download, confirm the text loading dialog remains visible until completion or error. Confirm tapping outside does not close MaruManga Downloader, its X does, and long menus scroll while the dialog stays centered.
 11. Open **Downloads** with both an empty queue and a large queue. Confirm the empty state, visible progress, and at most eight download rows per page; use Next/Previous, Refresh, Back, and X without closing KOReader unexpectedly.
 12. Open a manga's **Chapters** page with more than one screen of chapters. Verify it stays open, paginates, shows the `Page n / total` heading, and its Back and X controls work.
+13. Verify Settings shows Chapter language, Network, Download, Storage and Uninstall in that order. Open Storage, confirm the default folder is shown without an empty placeholder, choose a folder, then restore the default. Test uninstall with Cancel at each confirmation; do not remove the plugin during routine UI verification.
 
 Record device model, KOReader version, source/catalog revision, network state, and any unverified step in the release report.

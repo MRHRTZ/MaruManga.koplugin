@@ -33,11 +33,13 @@ For Android, the plugin directory is normally under KOReader's application data.
 | Library | Downloads |
 | <img src="images/library.png" alt="MaruManga Downloader library" width="360"> | <img src="images/downloads.png" alt="MaruManga Downloader download queue" width="360"> |
 
-**Settings > Network and storage** controls the download directory (default `./marumanga` under KOReader's data directory), concurrent downloads (default 2), timeout, retries, DNS, and optional SSL certificate validation override. Keep SSL verification enabled unless a trusted network requires otherwise.
+**Settings** is split into Chapter language, Network, Download, Storage, and Uninstall. Network contains timeout, retries, user-agent, DNS and the optional SSL certificate verification override. Download controls concurrent downloads (default 2). Storage shows the active folder (default `marumanga` under KOReader's data directory) and opens KOReader's folder picker; **Restore default folder** returns to that location. Uninstall asks separately whether to keep or remove MaruManga's data.
 
 ## Update checks
 
-**About > Check for updates** reads the version manifest at [release.json](https://raw.githubusercontent.com/MRHRTZ/MaruManga.koplugin/main/release.json). The manifest is intentionally a small, hardcoded raw GitHub endpoint; future releases update that file along with the GitHub release. When a newer version is found, the plugin reports the release page. The current update check does not silently replace plugin files.
+**About > Check for updates** reads the version manifest at [release.json](https://raw.githubusercontent.com/MRHRTZ/MaruManga.koplugin/main/release.json). When a newer release is available, confirm **Update now** to download and install its ZIP, then restart KOReader. The updater accepts HTTPS GitHub release assets, checks the archive structure and plugin version, stages extraction, and restores the prior plugin if activation fails. Keep the release manifest, `_meta.lua`, the archive contents, and the release asset version in sync.
+
+To build the Windows ZIP with KOReader-compatible `/` separators in every ZIP entry, run `powershell -ExecutionPolicy Bypass -File scripts/build-dist.ps1`. The script reads the version from `_meta.lua` and validates the archive paths and required plugin files before reporting success. Do not use a Windows archiver workflow that stores `\` characters inside ZIP entry names: AppStore expects standard slash-separated archive paths.
 
 ## Repository sources
 

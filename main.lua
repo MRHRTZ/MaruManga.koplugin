@@ -49,6 +49,7 @@ end
 local InfoMessage = require("ui/widget/infomessage")
 local Menu = require("ui/widget/menu")
 local ConfirmBox = require("ui/widget/confirmbox")
+local ButtonDialog = require("ui/widget/buttondialog")
 local InputDialog = require("ui/widget/inputdialog")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
 local _ = require("gettext")
@@ -78,6 +79,8 @@ local ImageValidation = dofile(path .. "reader/image_validation.lua")
 local FileDigest = dofile(path .. "reader/file_digest.lua")
 local ArchiveScan = dofile(path .. "core/archive_scan.lua")
 local AllSourceSearch = dofile(path .. "core/all_source_search.lua")
+local PluginUpdater = dofile(path .. "core/plugin_updater.lua")
+local Uninstaller = dofile(path .. "core/uninstaller.lua")
 local LocalArchive = dofile(path .. "core/local_archive.lua")
 local ArchiveCheck = dofile(path .. "reader/archive_check.lua")
 local FileSystem = dofile(path .. "reader/filesystem.lua")
@@ -160,7 +163,7 @@ local function loadingMessage(text)
     end
     return message
 end
-local PLUGIN_VERSION="0.2.2"
+local PLUGIN_VERSION="0.2.5"
 local PLUGIN_LAST_UPDATE="2026-11-05"
 function MaruManga:init()
     self.ui.menu:registerToMainMenu(self)
@@ -529,7 +532,10 @@ function MaruManga:loadList(title, fetch, convert, page, options)
             local has_results=#items>0
             if not has_results then items[#items+1]={text=_("No matching titles"),maru_no_icon=true} end
             local external_next=options.external_next or {text=_("Load more results"),action=function() self:loadList(title,fetch,convert,page+1,options) end}
-            self:menu(title, items,nil,false,nil,{grid=has_results,page_limit=6,page_title=has_results and title or nil,external_next=has_results and result.has_next and external_next or nil,on_page=function(first,last)
+            -- Keep search result pages to two card rows on small e-ink screens.
+            -- This avoids handing an oversized results page to KOReader's
+            -- ButtonDialog layout immediately after the loading dialog closes.
+            self:menu(title, items,nil,false,nil,{grid=has_results,page_limit=4,page_title=has_results and title or nil,external_next=has_results and result.has_next and external_next or nil,on_page=function(first,last)
                 self:prefetchVisibleCovers(items,first,last,self.main_menu and self.main_menu.current_page)
             end})
         end)
@@ -1493,7 +1499,7 @@ function MaruManga:showLibrary(query,sort,filter)
         end}
     end
     if #items == 0 then items[1]={text=_("No matching titles"),maru_no_icon=true} end
-    self:menu(_("Library"),clickable(items),nil,false,nil,{grid=not items[1].maru_no_icon,page_limit=6,page_title=not items[1].maru_no_icon and _("Library") or nil,on_page=function(first,last)
+    self:menu(_("Library"),clickable(items),nil,false,nil,{grid=not items[1].maru_no_icon,page_limit=4,page_title=not items[1].maru_no_icon and _("Library") or nil,on_page=function(first,last)
         self:prefetchVisibleCovers(items,first,last,self.main_menu and self.main_menu.current_page)
     end})
 end
@@ -1890,34 +1896,42 @@ function MaruManga:settings()
     end}}}}
     show(dialog); dialog:onShowKeyboard()
 end
-function MaruManga:networkValuesSettings(dns_mode_after_save)
+local function saveNetworkConfig(plugin,values)
+    local config=plugin.config.data
+    local old={config.timeout,config.retries,config.user_agent,config.download_dir,config.download_concurrency,config.ignore_ssl_certificates}
+    local download_dir=config.download_dir or ""
+    local ignore_ssl=config.ignore_ssl_certificates==true
+    if values.download_dir~=nil then download_dir=values.download_dir end
+    if values.ignore_ssl_certificates~=nil then ignore_ssl=values.ignore_ssl_certificates end
+    local ok,err=plugin.config:setNetwork(
+        values.timeout or config.timeout,values.retries or config.retries,values.user_agent or config.user_agent,
+        download_dir,
+        values.download_concurrency or config.download_concurrency or 2,
+        ignore_ssl
+    )
+    if not ok then return nil,err end
+    ok,err=plugin.config:save()
+    if not ok then
+        config.timeout,config.retries,config.user_agent,config.download_dir,config.download_concurrency,config.ignore_ssl_certificates=unpack(old)
+        return nil,err
+    end
+    plugin.manga_sources=nil
+    return true
+end
+function MaruManga:networkValuesSettings()
     if not self.config then return self:notice(self.config_error) end
     local config=self.config.data
     local dialog
     local ignore_ssl_checkbox
-    dialog=MultiInputDialog:new{title=_("Network and storage"),fields={
+    dialog=MultiInputDialog:new{title=_("Network"),fields={
         {text=tostring(config.timeout),hint=_("Timeout in seconds")},
         {text=tostring(config.retries),hint=_("Maximum attempts")},
         {text=config.user_agent,hint=_("User agent")},
-        {text=config.download_dir or "",hint=_("Download folder (blank for default ./marumanga)")},
-        {text=tostring(config.download_concurrency or 2),hint=_("Concurrent downloads (1-5)")},
-        {text=config.dns_server or "",hint=_("Manual DNS IPv4 (used by Other)")},
     },buttons={{{text=_("Cancel"),callback=function() UIManager:close(dialog) end},{text=_("Save"),callback=function()
-        local fields=dialog:getFields(); local old={config.timeout,config.retries,config.user_agent,config.download_dir,config.download_concurrency,config.ignore_ssl_certificates,config.dns_mode,config.dns_server}
-        local ok,err=self.config:setNetwork(fields[1],fields[2],fields[3],fields[4],fields[5],ignore_ssl_checkbox.checked)
+        local fields=dialog:getFields()
+        local ok,err=saveNetworkConfig(self,{timeout=fields[1],retries=fields[2],user_agent=fields[3],ignore_ssl_certificates=ignore_ssl_checkbox.checked})
         if not ok then return self:notice(err) end
-        local dns_mode=dns_mode_after_save or config.dns_mode
-        if dns_mode=="other" then
-            ok,err=self.config:setDns("other",fields[6])
-            if not ok then
-                config.timeout,config.retries,config.user_agent,config.download_dir,config.download_concurrency,config.ignore_ssl_certificates,config.dns_mode,config.dns_server=unpack(old)
-                return self:notice(err)
-            end
-        end
-        ok,err=self.config:save()
-        if not ok then config.timeout,config.retries,config.user_agent,config.download_dir,config.download_concurrency,config.ignore_ssl_certificates,config.dns_mode,config.dns_server=unpack(old); return self:notice(err) end
-        self.manga_sources=nil; UIManager:close(dialog)
-        if dns_mode_after_save and self.panel_enabled and self.main_menu then self.main_menu:goBack(); self:networkSettings(true) else self:notice(_("Settings saved")) end
+        UIManager:close(dialog); self:notice(_("Network settings saved"))
     end}}}}
     local CheckButton=require("ui/widget/checkbutton")
     ignore_ssl_checkbox=CheckButton:new{
@@ -1932,10 +1946,61 @@ function MaruManga:networkSettings(replace_page)
     if not self.config then return self:notice(self.config_error) end
     local mode=self.config.data.dns_mode or "auto"
     local labels={auto=_("Auto"),google=_("Google"),cloudflare=_("Cloudflare"),other=_("Other")}
-    self:menu(_("Network and storage"),{
-        {text=_("Connection and download settings"),action=function() self:networkValuesSettings() end},
+    self:menu(_("Network"),{
+        {text=_("Connection settings"),action=function() self:networkValuesSettings() end},
         {text=_("DNS resolver: ")..(labels[mode] or labels.auto),maru_icon="source",action=function() self:dnsSettings() end},
     },nil,nil,nil,replace_page)
+end
+function MaruManga:downloadSettings(replace_page)
+    if not self.config then return self:notice(self.config_error) end
+    self:menu(_("Download"),{
+        {text=_("Concurrent downloads: ")..tostring(self.config.data.download_concurrency or 2),action=function()
+            local dialog
+            dialog=InputDialog:new{title=_("Concurrent downloads (1–5)"),input=tostring(self.config.data.download_concurrency or 2),buttons={{{text=_("Cancel"),callback=function() UIManager:close(dialog) end},{text=_("Save"),callback=function()
+                local ok,err=saveNetworkConfig(self,{download_concurrency=dialog:getInputText()})
+                if not ok then return self:notice(err) end
+                UIManager:close(dialog); self:menu(_("Download"),{{text=_("Concurrent downloads: ")..tostring(self.config.data.download_concurrency),action=function() self:downloadSettings(true) end}},nil,nil,true)
+            end}}}}
+            show(dialog); dialog:onShowKeyboard()
+        end},
+    },nil,nil,nil,replace_page)
+end
+function MaruManga:storageSettings(replace_page)
+    if not self.config then return self:notice(self.config_error) end
+    local default_path=DataStorage:getFullDataDir().."/marumanga"
+    local current_path=self:downloadRoot()
+    local items={
+        {maru_key=_("Folder"),maru_value=current_path},
+        {text=_("Choose folder"),maru_icon="folder",action=function() self:chooseDownloadFolder() end},
+    }
+    if self.config.data.download_dir then
+        items[#items+1]={text=_("Restore default folder"),action=function()
+            local ok,err=saveNetworkConfig(self,{download_dir=""})
+            if not ok then return self:notice(err) end
+            self:storageSettings(true)
+        end}
+    end
+    self:menu(_("Storage"),items,nil,nil,nil,replace_page)
+end
+function MaruManga:chooseDownloadFolder()
+    if not self.config then return self:notice(self.config_error) end
+    local lfs=require("libs/libkoreader-lfs")
+    local selected=self:downloadRoot()
+    local start=selected
+    while start and start~="/" and lfs.attributes(start,"mode")~="directory" do
+        start=start:match("^(.*)/[^/]+$")
+    end
+    if not start or lfs.attributes(start,"mode")~="directory" then start="/" end
+    local chooser=require("ui/widget/pathchooser"):new{
+        path=start,select_directory=true,select_file=false,show_files=false,
+        title=_("Choose download folder"),
+        onConfirm=function(folder)
+            local ok,err=saveNetworkConfig(self,{download_dir=folder})
+            if not ok then return self:notice(err) end
+            self:storageSettings(true)
+        end,
+    }
+    show(chooser)
 end
 function MaruManga:dnsSettings()
     if not self.config then return self:notice(self.config_error) end
@@ -1959,9 +2024,17 @@ function MaruManga:dnsSettings()
                 if self.panel_enabled and self.main_menu then self.main_menu:goBack(); self:networkSettings(true) else self:notice(_("DNS setting saved")) end
             end
             if selected.id=="other" then
-                -- Reuse the established network settings form for manual entry.
-                -- This avoids a second modal being layered over the custom panel.
-                self:networkValuesSettings("other")
+                local dialog
+                dialog=InputDialog:new{title=_("Manual DNS IPv4 address"),input=self.config.data.dns_server or "",buttons={{{text=_("Cancel"),callback=function() UIManager:close(dialog) end},{text=_("Save"),callback=function()
+                    local server=dialog:getInputText()
+                    local old_mode,old_server=self.config.data.dns_mode,self.config.data.dns_server
+                    local ok,err=self.config:setDns("other",server)
+                    if not ok then return self:notice(err) end
+                    ok,err=self.config:save()
+                    if not ok then self.config.data.dns_mode,self.config.data.dns_server=old_mode,old_server; return self:notice(err) end
+                    UIManager:close(dialog); self:networkSettings(true)
+                end}}}}
+                show(dialog); dialog:onShowKeyboard()
             else save() end
         end}
     end
@@ -1970,8 +2043,67 @@ end
 function MaruManga:openSettings()
     self:menu(_("Settings"),{
         {text=_("Chapter language"),action=function() self:settings() end},
-        {text=_("Network and storage"),action=function() self:networkSettings() end},
+        {text=_("Network"),group_end=true,action=function() self:networkSettings() end},
+        {text=_("Download"),action=function() self:downloadSettings() end},
+        {text=_("Storage"),group_end=true,action=function() self:storageSettings() end},
+        {text=_("Uninstall"),action=function() self:confirmUninstall() end},
     })
+end
+function MaruManga:confirmUninstall()
+    if self.downloads then
+        for _,item in ipairs(self.downloads.state and self.downloads.state.items or {}) do
+            if item.status=="running" then
+                return self:notice(_("Wait for active downloads to finish before uninstalling."))
+            end
+        end
+    end
+    show(ConfirmBox:new{
+        text=_("Uninstall MaruManga Downloader from KOReader? You can choose whether to keep its library and downloaded files in the next step."),
+        ok_text=_("Uninstall"),cancel_text=_("Cancel"),
+        ok_callback=function() self:chooseUninstallData() end,
+    })
+end
+function MaruManga:chooseUninstallData()
+    local TextBoxWidget=require("ui/widget/textboxwidget")
+    local Screen=require("device").screen
+    local dialog
+    dialog=ButtonDialog:new{
+        title=_("Uninstall MaruManga Downloader"),
+        _added_widgets={TextBoxWidget:new{
+            text=_("Keep data preserves the library, settings, cache, and downloaded manga. Uninstall removes MaruManga's settings and its manga and cache folders."),
+            width=math.floor(Screen:getWidth()*0.76),padding=0,
+        }},
+        dismissable=false,
+        buttons={
+            {{text=_("Cancel"),callback=function() UIManager:close(dialog) end}},
+            {{text=_("Keep data"),callback=function() UIManager:close(dialog); self:runUninstall(false) end}},
+            {{text=_("Uninstall"),callback=function() UIManager:close(dialog); self:runUninstall(true) end}},
+        },
+    }
+    show(dialog)
+end
+function MaruManga:runUninstall(remove_data)
+    local loading=loadingMessage(remove_data and _("Removing MaruManga and its data…") or _("Removing MaruManga…"))
+    show(loading)
+    local loading_open=true
+    local function finish(ok,result,why,runner_error)
+        if loading_open then loading_open=false; UIManager:close(loading) end
+        if not ok then return self:notice(result or why or runner_error or _("Could not uninstall MaruManga Downloader")) end
+        self:notice(remove_data and _("MaruManga and its data were removed. Restart KOReader to finish uninstalling.") or _("MaruManga was removed. Its data was kept. Restart KOReader to finish uninstalling."))
+        UIManager:askForRestart()
+    end
+    local plugin_dir=path:gsub("[/\\]+$","")
+    local settings_path=DataStorage:getSettingsDir().."/marumanga.lua"
+    local download_root=self:downloadRoot()
+    local started,err=pcall(function()
+        self:runner().run(function()
+            return Uninstaller.uninstall({
+                lfs=require("libs/libkoreader-lfs"),plugin_path=plugin_dir,
+                remove_data=remove_data,settings_path=settings_path,download_root=download_root,
+            })
+        end,600,finish)
+    end)
+    if not started then finish(false,nil,nil,tostring(err)) end
 end
 function MaruManga:about()
     self:menu(_("About"),{
@@ -2001,26 +2133,50 @@ function MaruManga:checkPluginUpdates()
         end
         local latest=type(release.version)=="string" and release.version:gsub("^[vV]","")
         if not latest or latest=="" then return self:notice(_("The latest release has no version tag.")) end
-        local function parts(value)
-            local result={}
-            for number in value:gmatch("(%d+)") do result[#result+1]=tonumber(number) end
-            return result
-        end
-        local current_parts,latest_parts=parts(PLUGIN_VERSION),parts(latest)
-        local newer=false
-        for i=1,math.max(#current_parts,#latest_parts) do
-            local current,available=current_parts[i] or 0,latest_parts[i] or 0
-            if available>current then newer=true; break end
-            if available<current then break end
-        end
-        if newer then
-            local destination=type(release.release_url)=="string" and release.release_url or "https://github.com/MRHRTZ/MaruManga.koplugin/releases/latest"
-            local download=type(release.download_url)=="string" and release.download_url or destination
-            self:notice(_("Update available: ")..latest.."\n".._("Installed version: ")..PLUGIN_VERSION.."\n".._("Release: ")..destination.."\n".._("Download: ")..download)
+        if PluginUpdater.isNewer(PLUGIN_VERSION,latest) then
+            local download=type(release.download_url)=="string" and release.download_url or nil
+            local host=download and PluginUpdater.validateURL(download)
+            if not host then return self:notice(_("A newer version was found, but its download URL is invalid.")) end
+            show(ConfirmBox:new{
+                text=_("Version ")..latest.._(" is available. Installed version: ")..PLUGIN_VERSION..".\n\n".._("Download and install the update now?"),
+                ok_text=_("Update now"),cancel_text=_("Cancel"),
+                ok_callback=function() self:installPluginUpdate(download,latest,release.sha256) end,
+            })
         else
             self:notice(_("MaruManga Downloader is up to date.").." ("..PLUGIN_VERSION..")")
         end
     end)
+end
+function MaruManga:installPluginUpdate(download_url,version,sha256)
+    local loading=loadingMessage(_("Downloading and installing update…")); show(loading)
+    local loading_open=true
+    local function finish(ok,result,runner_error)
+        if loading_open then loading_open=false; UIManager:close(loading) end
+        if not ok then return self:notice(result or runner_error or _("Could not install the update")) end
+        self:notice(_("Update installed: ")..version..". ".._("Restart KOReader to finish updating."))
+        UIManager:askForRestart()
+    end
+    local plugin_dir=path:gsub("[/\\]+$","")
+    local runner=self:runner()
+    local started,err=pcall(function()
+        runner.run(function()
+            local config=self.config and self.config.data or {}
+            return PluginUpdater.downloadAndInstall({
+                url=download_url,version=version,sha256=sha256,plugin_path=plugin_dir,
+                secure_request=SecureRequest,archiver=require("ffi/archiver"),
+                lfs=require("libs/libkoreader-lfs"),util=require("util"),
+                dependencies=function()
+                    local deps=applyDNS(networkDependencies(),config)
+                    deps.timeout=config.timeout or 25
+                    deps.user_agent="MaruMangaDownloader/"..PLUGIN_VERSION.." (KOReader update)"
+                    deps.ignore_ssl_certificates=config.ignore_ssl_certificates==true
+                    return deps
+                end,
+                digest=function(file) return FileDigest.hash(file,require("ffi/sha2").sha256) end,
+            })
+        end,240,finish)
+    end)
+    if not started then finish(false,tostring(err)) end
 end
 function MaruManga:manageDiscoverSources()
     if not self.config then return self:notice(self.config_error) end

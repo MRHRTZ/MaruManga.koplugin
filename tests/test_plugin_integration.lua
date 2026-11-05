@@ -73,6 +73,14 @@ local plugin=dofile("./main.lua")
 local registered=false
 plugin.ui={menu={registerToMainMenu=function(_,p) registered=p==plugin end}}; plugin:init(); plugin.default_refresh_started=true
 local menu={}; plugin:addToMainMenu(menu); assert(registered and menu.marumanga and menu.marumanga.sorting_hint=="tools" and plugin.config.data.source=="komiku")
+plugin:openSettings()
+local settings_menu=widgets[#widgets]
+assert(settings_menu.title=="Settings" and #settings_menu.item_table==5)
+assert(settings_menu.item_table[1].text=="Chapter language")
+assert(settings_menu.item_table[2].text=="Network" and settings_menu.item_table[2].group_end)
+assert(settings_menu.item_table[3].text=="Download")
+assert(settings_menu.item_table[4].text=="Storage" and settings_menu.item_table[4].group_end)
+assert(settings_menu.item_table[5].text=="Uninstall")
 local bundled_repo; for _,candidate in ipairs(plugin.repositories:list()) do if candidate.builtin then bundled_repo=candidate end end
 assert(bundled_repo and #plugin.config.data.auto_installed_source_ids>=4)
 assert(plugin:profile("komiku").repository_url==bundled_repo.url)
@@ -135,7 +143,7 @@ pending_search.first({items={{id="a",source_id="first",title="First title"}},has
 assert(widgets[#widgets].text=="Searching manga... (2/2)" and search_calls.second)
 pending_search.second({items={{id="b",source_id="second",title="Second title"}},has_next=false})
 local combined_search=widgets[#widgets]
-assert(combined_search.title=="Search" and #combined_search.item_table==2)
+assert(combined_search.title=="Search" and #combined_search.item_table==2 and combined_search.page_limit==4)
 assert(combined_search.item_table[1].maru_manga.source_id=="first" and combined_search.item_table[2].maru_manga.source_id=="second")
 plugin.config.data.profiles,plugin.source=previous_profiles,previous_source_method
 source=assert(plugin:source("example"))
@@ -156,7 +164,7 @@ local has_cover_action=false; for _,item in ipairs(detail.item_table) do if type
 source.getChapterList=function(_,manga,page,callback) callback({items={{id="chapter-1",manga_id=manga.id,name="Chapter 1"}},has_next=false}) end
 chapters.action(); local list=widgets[#widgets]; assert(list.title:match("Series") and #list.item_table>=2 and list.page_limit==8)
 plugin:loadList("Popular",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
-local popular=widgets[#widgets]; assert(popular.title=="Popular" and popular.item_table[1].maru_manga.title=="Series")
+local popular=widgets[#widgets]; assert(popular.title=="Popular" and popular.item_table[1].maru_manga.title=="Series" and popular.page_limit==4)
 results.items[1].latest_chapter="Chapter 23"
 plugin:loadList("Search",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
 assert(widgets[#widgets].item_table[1].maru_progress=="Chapter 23")
@@ -183,6 +191,18 @@ plugin:about(); local about=home.current_page.items
 local update_fields=0
 for _,item in ipairs(about) do if item.text:find("Last Update: 2026%-%d%d%-%d%d %d%d:%d%d") then update_fields=update_fields+1 end; assert(not item.text:match("^Time:")) end
 assert(update_fields==1)
+plugin.panel_enabled=false; plugin:openSettings(); local settings_menu=widgets[#widgets]
+assert(settings_menu.title=="Settings" and settings_menu.item_table[1].text=="Chapter language")
+assert(settings_menu.item_table[2].text=="Network" and settings_menu.item_table[2].group_end)
+assert(settings_menu.item_table[3].text=="Download" and settings_menu.item_table[4].text=="Storage")
+assert(settings_menu.item_table[5].text=="Uninstall")
+settings_menu.item_table[5].action(); local first_uninstall=widgets[#widgets]
+assert(first_uninstall.ok_text=="Uninstall" and first_uninstall.cancel_text=="Cancel")
+first_uninstall.ok_callback(); local uninstall_choices=widgets[#widgets]
+assert(uninstall_choices.title=="Uninstall MaruManga Downloader" and #uninstall_choices.buttons==3)
+assert(uninstall_choices.buttons[1][1].text=="Cancel" and uninstall_choices.buttons[2][1].text=="Keep data")
+assert(uninstall_choices.buttons[3][1].text=="Uninstall")
+uninstall_choices.buttons[1][1].callback()
 plugin.panel_enabled=false; plugin.main_menu=nil
 local repo=assert(plugin.repositories:add("https://example.org/catalog.json"))
 local catalog={schema_version=1,id="fixture",name="Fixture",author="MRHRTZ",version="1.12.0",status="Maintenance",sources={{id="catalogone",name="Catalog One",version=1,adapter="generic",base_url="https://example.org",languages={"en","id"},nsfw=true,profile={search_path="/?q={query}",popular_path="/popular",latest_path="/latest",list_selector="article",chapter_selector=".chapters a",page_selector=".reader img"}}}}
