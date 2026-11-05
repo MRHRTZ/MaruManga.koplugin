@@ -164,7 +164,7 @@ local function loadingMessage(text)
     end
     return message
 end
-local PLUGIN_VERSION="0.2.7"
+local PLUGIN_VERSION="0.2.8"
 local PLUGIN_LAST_UPDATE="2026-11-05"
 function MaruManga:init()
     self.ui.menu:registerToMainMenu(self)
