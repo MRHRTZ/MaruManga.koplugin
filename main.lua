@@ -164,7 +164,7 @@ local function loadingMessage(text)
     end
     return message
 end
-local PLUGIN_VERSION="0.2.9"
+local PLUGIN_VERSION="0.3.1"
 local PLUGIN_LAST_UPDATE="2026-11-05"
 function MaruManga:init()
     self.ui.menu:registerToMainMenu(self)
@@ -608,7 +608,7 @@ function MaruManga:showManga(manga)
                 {maru_key=_("Genres"),maru_value=present(genres)},
                 {maru_key=_("Source"),maru_value=source and source:getName() or detail.source_id,group_end=true},
                 {text=_("Download All Chapters"),icon=path.."images/menu/download-all.svg",action=function() self:downloadAllChapters(detail) end},
-                {text=_("Chapters"),icon=path.."images/menu/downloads.svg",action=function() self:chapters(detail,1) end},
+                {text=_("Chapters"),icon=path.."images/menu/chapter.svg",action=function() self:chapters(detail,1) end},
             }
             if in_library then
                 items[#items+1]={text=_("Remove from library"),icon=path.."images/menu/library.svg",action=function()
@@ -629,11 +629,11 @@ function MaruManga:showManga(manga)
                     self:menu(detail.title,items,nil,false,nil,{
                         hero=cover,
                         hero_icon=not cover,
-                        -- Keep the mixed cover/synopsis page compact. On
-                        -- longer WEBTOON descriptions and wrapped metadata,
-                        -- several rows can exceed ButtonDialog's safe height.
-                        page_limit=3,
-                        page_title=detail.title,
+                        -- Keep every detail action on one tall, centered panel.
+                        -- The panel uses the native screen margins and fills
+                        -- spare height instead of splitting actions into pages.
+                        page_limit=math.max(1,#items),
+                        fill_height=true,
                         description=description==_("Unknown") and _("No description") or description,
                     })
                 end,_("Could not display manga details"))
@@ -695,7 +695,7 @@ function MaruManga:chapters(manga, page, order)
             items[#items+1] = {text=c.name .. (chapter_status and chapter_status.read and " · ✓" or "") .. (downloaded and " · ↓" or "") .. date .. (c.scanlator and (" · " .. c.scanlator) or ""), action=function()
                 local actions={}
                 if downloaded then
-                    actions[#actions+1]={text=_("Open downloaded file"),icon=path.."images/menu/book.svg",action=function() self:openDownloaded(manga,c) end}
+                    actions[#actions+1]={text=_("Read Manga"),icon=path.."images/menu/book.svg",action=function() self:openDownloaded(manga,c) end}
                     actions[#actions+1]={text=_("Verify downloaded file"),icon=path.."images/menu/verify.svg",action=function() self:verifyDownload(manga,c) end}
                 else
                     actions[#actions+1]={text=_("Download"),icon=path.."images/menu/download.svg",action=function() self:queueChapter(manga,c) end}
@@ -709,8 +709,9 @@ function MaruManga:chapters(manga, page, order)
             -- Chapter titles can wrap to multiple lines, particularly in
             -- WEBTOON listings. Keep each native dialog page short so
             -- ButtonDialog never enters its fragile custom-widget scroll grid.
-            page_limit=3,
+            page_limit=6,
             page_title=manga.title,
+            fill_height=true,
             header_action={icon=path.."images/menu/download-all.svg",callback=function() self:downloadAllChapters(manga) end},
         })
     end,order)
@@ -769,7 +770,11 @@ function MaruManga:downloadAllChapters(manga)
         end
         local added,duplicates=self.downloads:addMany(pending)
         if not added then return self:notice(duplicates) end
-        self:notice(_("Queued: ")..added.." · ".._("Already downloaded or queued: ")..(skipped+duplicates))
+        if added>0 then
+            self:askOpenDownloads(added,skipped+duplicates)
+        else
+            self:notice(_("No new chapters were added. All chapters are already downloaded or queued."))
+        end
     end
     local function fetch()
         if job.cancelled then return end
@@ -950,7 +955,25 @@ function MaruManga:queueChapter(manga,chapter)
     local file=self.library and self.library:archiveFor(manga.source_id,manga.id,chapter.id)
     if file and self.library:archiveHasChapter(file,chapter.id) and self:filesystem().exists(file) then return self:notice(_("This chapter is already in the manga CBZ")) end
     local ok,err=self.downloads:add(manga,chapter,false)
-    self:notice(ok and _("Chapter queued for download") or err)
+    if not ok then return self:notice(err or _("Could not add chapter to download queue")) end
+    show(ConfirmBox:new{
+        text=_("Chapter added to the download queue. Open Downloads now?"),
+        ok_text=_("Yes"),
+        cancel_text=_("No"),
+        ok_callback=function() self:showDownloads() end,
+    })
+end
+function MaruManga:askOpenDownloads(added,skipped)
+    if type(added)~="number" or added<1 then return false end
+    local message=_("Added ")..added.._(" chapters to the download queue.")
+    if skipped and skipped>0 then message=message.."\n\n"..skipped.._(" chapters were already downloaded or queued.") end
+    show(ConfirmBox:new{
+        text=message.."\n\n".._("Open Downloads now?"),
+        ok_text=_("Yes"),
+        cancel_text=_("No"),
+        ok_callback=function() self:showDownloads() end,
+    })
+    return true
 end
 function MaruManga:search(source_id)
     local dialog
@@ -1087,6 +1110,8 @@ function MaruManga:showRepositories(page)
         return count
     end
     local page_size=12
+    local page_count=math.max(1,math.ceil(#all_repos/page_size))
+    page=math.min(page,page_count)
     local first=(page-1)*page_size+1; local last=math.min(#all_repos,page*page_size)
     for ignored_index,repository in ipairs(all_repos) do
         local repo=repository
@@ -1159,6 +1184,8 @@ function MaruManga:showRepositorySources(repo,source_query,page,replace_page)
     items[#items+1]={text=_("Mass Install"),icon=path.."images/menu/downloads.svg",action=function() self:massSourceAction(repo,true) end}
     items[#items+1]={text=_("Mass Uninstall"),icon=path.."images/menu/library.svg",group_end=true,action=function() self:massSourceAction(repo,false) end}
     local page_size=12
+    local page_count=math.max(1,math.ceil(#filtered/page_size))
+    page=math.min(page,page_count)
     local first=(page-1)*page_size+1
     local last=math.min(#filtered,page*page_size)
     for index=first,last do
@@ -1178,7 +1205,7 @@ function MaruManga:showRepositorySources(repo,source_query,page,replace_page)
     if #sources==0 then items[#items+1]={text=_("No sources in this repository")} elseif #filtered==0 then items[#items+1]={text=_("No matching sources")} end
     if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/previous-page.svg",action=function() self:showRepositorySources(repo,source_query,page-1) end} end
     if last<#filtered then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg",action=function() self:showRepositorySources(repo,source_query,page+1) end} end
-    local page_title=title.." · Sources · Page "..page
+    local page_title=title.." · Sources · "..page.."/"..page_count
     self:menu(page_title,clickable(items),nil,true,replace_page)
 end
 function MaruManga:editRepository(repo)
@@ -1565,7 +1592,7 @@ function MaruManga:offlineChapters(manga)
                 local c={id=archived.id,name=archived.name,manga_id=manga.id,url=metadata.url,chapter_number=metadata.chapter_number,scanlator=metadata.scanlator,upload_date=metadata.upload_date}
                 items[#items+1]={text=c.name or c.id,action=function()
                     self:menu(c.name or c.id,{
-                        {text=_("Open downloaded file"),action=function() self:openDownloaded(manga,c) end},
+                        {text=_("Read Manga"),action=function() self:openDownloaded(manga,c) end},
                         {text=_("Verify downloaded file"),action=function() self:verifyDownload(manga,c) end},
                     })
                 end}
@@ -1690,7 +1717,7 @@ function MaruManga:showDownloads(page)
     if total==0 then items[1]={text=_("No downloads")} end
     if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/previous-page.svg",action=function() self:showDownloads(page-1) end} end
     if page<page_count then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg",action=function() self:showDownloads(page+1) end} end
-    self.download_menu=self:menu(_("Downloads").." · ".._("Page ")..page.." / "..page_count,items,nil,false,true,{
+    self.download_menu=self:menu(_("Downloads").." · "..page.."/"..page_count,items,nil,false,true,{
         header_action={icon=path.."images/menu/refresh.svg",callback=function() self:showDownloads(page) end},
     })
 end
@@ -1699,9 +1726,11 @@ function MaruManga:showMangaDownloadActions(group,page)
     local items={}
     if group.running+group.queued>0 then
         items[#items+1]={text=_("Pause All"),icon=path.."images/menu/pause.svg",action=function()
-            local count=self.downloads:pauseManga(group.source_id,group.manga_id)
-            self:notice(_("Paused chapters: ")..count)
-            self:showMangaDownloads(group.source_id,group.manga_id,1,true)
+            show(ConfirmBox:new{text=_("Pause all pending chapter downloads for this manga? Completed chapters and the manga CBZ will be kept."),ok_text=_("Pause All"),ok_callback=function()
+                local count=self.downloads:pauseManga(group.source_id,group.manga_id)
+                self:notice(_("Paused chapters: ")..count)
+                self:showMangaDownloads(group.source_id,group.manga_id,1,true)
+            end})
         end}
     end
     if group.paused>0 then
@@ -1865,7 +1894,10 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
         end
     end
     if not manga then return self:showDownloads() end
-    local page_size=8
+    -- Each chapter row can wrap to several lines and progress rows are taller.
+    -- Keep room for both Previous and Next on middle pages so the custom
+    -- dialog never overflows KOReader's ButtonDialog scroll-grid path.
+    local page_size=6
     local total=#entries
     local page_count=math.max(1,math.ceil(total/page_size))
     page=math.max(1,math.min(math.floor(tonumber(page) or 1),page_count))
@@ -1913,7 +1945,7 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
             elseif current.status=="queued" or current.status=="running" then
                 choices[#choices+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() local ok,err=self.downloads:cancel(current); self:notice(ok and _("Cancellation requested") or err); self:showMangaDownloads(source_id,manga_id,page,true) end}
             elseif current.status=="completed" then
-                choices[#choices+1]={text=_("Open downloaded file"),icon=path.."images/menu/book.svg",action=function() self:openDownloaded(current.manga,current.chapter) end}
+                choices[#choices+1]={text=_("Read Manga"),icon=path.."images/menu/book.svg",action=function() self:openDownloaded(current.manga,current.chapter) end}
                 choices[#choices+1]={text=_("Verify downloaded file"),icon=path.."images/menu/verify.svg",action=function() self:verifyDownload(current.manga,current.chapter) end}
                 choices[#choices+1]={text=_("Delete this chapter"),icon=path.."images/menu/delete.svg",action=function() self:confirmDeleteDownloadedChapter(current,source_id,manga_id,page) end}
             end
@@ -1940,7 +1972,7 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
     if total==0 then items[1]={text=_("No queued chapters")} end
     if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/previous-page.svg",action=function() self:showMangaDownloads(source_id,manga_id,page-1,true) end} end
     if page<page_count then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg",action=function() self:showMangaDownloads(source_id,manga_id,page+1,true) end} end
-    self:menu((manga.title or manga_id).." · ".._("Page ")..page.." / "..page_count,items,nil,false,replace_page==true,{
+    self:menu((manga.title or manga_id).." · "..page.."/"..page_count,items,nil,false,replace_page==true,{
         header_action={icon=path.."images/menu/refresh.svg",callback=function() self:showMangaDownloads(source_id,manga_id,page,true) end},
     })
 end
@@ -2164,12 +2196,11 @@ function MaruManga:storageSettings(replace_page)
     local default_path=DataStorage:getFullDataDir().."/marumanga"
     local current_path=self:downloadRoot()
     local items={
-        {maru_key=_("CBZ folder"),maru_value=current_path},
-        {text=_("CBZ files go here; cache and covers are kept in .marumanga/")},
+        {maru_key=_("Data"),maru_value=current_path},
         {text=_("Choose folder"),maru_icon="folder",action=function() self:chooseDownloadFolder() end},
     }
     if self.config.data.download_dir then
-        items[#items+1]={text=_("Restore default folder"),action=function()
+        items[#items+1]={text=_("Set default"),action=function()
             local ok,err=saveNetworkConfig(self,{download_dir=""})
             if not ok then return self:notice(err) end
             self:storageSettings(true)
@@ -2443,7 +2474,7 @@ function MaruManga:manageDiscoverSources()
         if page<page_count then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg",action=function() render(page+1,true) end} end
         items[#items+1]={text=_("Save"),icon=path.."images/menu/save.svg",group_end=true,action=function() finish(true) end}
         items[#items+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() finish(false) end}
-        self:menu(_("Manage Sources · Page ")..page.." / "..page_count,items,nil,false,replace_page,{page_limit=page_size+4})
+        self:menu(_("Manage Sources · ")..page.."/"..page_count,items,nil,false,replace_page,{page_limit=page_size+4})
     end
     render(1,false)
 end

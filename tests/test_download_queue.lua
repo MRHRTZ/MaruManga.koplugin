@@ -3,8 +3,10 @@ local store={readSetting=function(self) return self.value end,saveSetting=functi
 local tasks={}; local q=assert(Queue.open(store,function(item,done) local t={item=item,done=done,cancel=function(self) self.cancelled=true end}; tasks[#tasks+1]=t; return t end,function() return 1 end))
 local m={id="m",source_id="s"}; local c={id="c",manga_id="m"}; local d={id="d",manga_id="m"}
 assert(q:add(m,c)); assert(q:add(m,d)); assert(#tasks==1 and not q:add(m,c)); tasks[1].done(true); assert(#tasks==2 and q.state.items[1].status=="completed")
-assert(q:cancel(q.state.items[2])); assert(tasks[2].cancelled); tasks[2].done(nil,"Cancelled"); assert(q.state.items[2].status=="cancelled")
-assert(q:retry(q.state.items[2]) and #tasks==3); tasks[3].done(nil,"offline"); assert(q.state.items[2].status=="failed")
+assert(q:cancel(q.state.items[2])); assert(tasks[2].cancelled); tasks[2].done(nil,"Cancelled"); assert(#q.state.items==1 and q.state.items[2]==nil)
+local retry_chapter={id="retry",manga_id="m"}
+assert(q:add(m,retry_chapter) and #tasks==3); tasks[3].done(nil,"offline"); assert(q.state.items[2].status=="failed")
+assert(q:retry(q.state.items[2]) and #tasks==4); tasks[4].done(nil,"offline"); assert(q.state.items[2].status=="failed")
 q.state.items[2].status="running"; assert(Queue.open(store,function() end).state.items[2].error=="Interrupted")
 local writes=0; local store2={readSetting=function() end,saveSetting=function() end,flush=function() writes=writes+1 end}
 local batch=assert(Queue.open(store2,function() return {} end,function() return 1 end))
@@ -30,6 +32,14 @@ assert(concurrent.state.items[1].status=="completed" and concurrent.state.items[
 
 local old={readSetting=function() return {version=1,items={{manga=m,chapter=c,status="queued",open_after=true}}} end}
 assert(Queue.open(old,function() end).state.items[1].open_after==nil)
+local cancelled_writes=0
+local old_cancelled={
+    readSetting=function() return {version=1,items={{manga=m,chapter=c,status="completed"},{manga=m,chapter=d,status="cancelled"}}} end,
+    saveSetting=function() cancelled_writes=cancelled_writes+1 end,
+    flush=function() end,
+}
+local migrated_cancelled=assert(Queue.open(old_cancelled,function() end))
+assert(#migrated_cancelled.state.items==1 and migrated_cancelled.state.items[1].status=="completed" and cancelled_writes==1)
 local old_most={readSetting=function() return {version=1,items={{manga={id="8",source_id="mangago",url="https://mangamost.com/comics/8"},chapter={id="96",manga_id="8",source_id="mangago"},status="queued"}}} end}
 local migrated_most=assert(Queue.open(old_most,function() end)).state.items[1]
 assert(migrated_most.manga.source_id=="mangamost" and migrated_most.chapter.source_id=="mangamost")
@@ -50,8 +60,18 @@ pause_tasks[2].done(true)
 assert(pause_queue.state.items[1].status=="completed" and pause_queue.state.items[2].status=="running" and #pause_tasks==3)
 assert(pause_queue:cancel(pause_queue.state.items[2]))
 pause_tasks[3].done(nil,"Cancelled")
-assert(pause_queue.state.items[2].status=="cancelled")
+assert(#pause_queue.state.items==1 and pause_queue.state.items[2]==nil)
 assert(pause_queue:pauseManga("s","m")==0)
+
+local bulk_tasks={}
+local bulk=assert(Queue.open({readSetting=function() end,saveSetting=function() end,flush=function() end},
+    function(item,done) local task={item=item,done=done,cancel=function(self) self.cancelled=true end}; bulk_tasks[#bulk_tasks+1]=task; return task end,function() return 1 end))
+local b1={id="b1",manga_id="m"}; local b2={id="b2",manga_id="m"}
+assert(bulk:addMany({{manga=m,chapter=b1},{manga=m,chapter=b2}})==2 and #bulk_tasks==1)
+assert(bulk:cancelManga("s","m")==2 and #bulk.state.items==1 and bulk.state.items[1].status=="running")
+assert(bulk_tasks[1].cancelled)
+bulk_tasks[1].done(nil,"Cancelled")
+assert(#bulk.state.items==0)
 
 local single_tasks={}
 local single=assert(Queue.open({readSetting=function() end,saveSetting=function() end,flush=function() end},

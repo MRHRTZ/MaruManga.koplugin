@@ -2,6 +2,13 @@
 local Parser={}; Parser.__index=Parser
 function Parser.new(html,resolve,clean,profile,digest)
     local generic=dofile((debug.getinfo(1,"S").source:sub(2):match("^(.*[/\\])") or "") .. "../generic/parser.lua")
+    -- Komiku profiles created by older plugin installs may not have retained
+    -- list selectors from repository metadata. The API always returns these
+    -- server-rendered cards, so keep the adapter usable with those profiles.
+    profile.list_selector=profile.list_selector or "div.bge"
+    profile.list_link_selector=profile.list_link_selector or "a"
+    profile.list_title_selector=profile.list_title_selector or "h3"
+    profile.list_cover_selector=profile.list_cover_selector or "img"
     -- Komiku's current server-rendered markup exposes author/status in
     -- microdata and table rows. These selectors override old installed
     -- catalogs that used unsupported CSS :contains() pseudo-selectors.

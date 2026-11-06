@@ -3,6 +3,13 @@ local Queue={}; Queue.__index=Queue
 function Queue.open(settings,start,max_concurrent)
     local state=settings:readSetting("marumanga_queue") or {version=1,items={}}
     if type(state)~="table" or state.version~=1 or type(state.items)~="table" then return nil,"Invalid download queue" end
+    local removed_cancelled=false
+    for index=#state.items,1,-1 do
+        if type(state.items[index])=="table" and state.items[index].status=="cancelled" then
+            table.remove(state.items,index)
+            removed_cancelled=true
+        end
+    end
     for _,item in ipairs(state.items) do
         if type(item)~="table" or type(item.manga)~="table" or type(item.chapter)~="table" or type(item.status)~="string" or type(item.manga.source_id)~="string" or type(item.manga.id)~="string" or type(item.chapter.id)~="string" or item.chapter.manga_id~=item.manga.id then return nil,"Invalid download queue" end
         if item.status~="queued" and item.status~="running" and item.status~="paused" and item.status~="completed" and item.status~="failed" and item.status~="cancelled" then return nil,"Invalid download queue" end
@@ -20,7 +27,9 @@ function Queue.open(settings,start,max_concurrent)
             if item.chapter.source_id=="mangago" then item.chapter.source_id="mangamost" end
         end
     end
-    return setmetatable({settings=settings,start=start,state=state,max_concurrent=max_concurrent or function() return 2 end,active_items={},controllers={},pumping=false},Queue)
+    local self=setmetatable({settings=settings,start=start,state=state,max_concurrent=max_concurrent or function() return 2 end,active_items={},controllers={},pumping=false},Queue)
+    if removed_cancelled then self:save() end
+    return self
 end
 function Queue:save()
     self.settings:saveSetting("marumanga_queue",self.state)
@@ -96,7 +105,13 @@ function Queue:run()
                 elseif item.pause_requested then item.status="paused"
                 else item.status=ok and "completed" or "failed" end
                 item.error=item.status=="failed" and (err or "Download failed") or nil
+                if item.status=="cancelled" and item.remove_after_cancel then
+                    for index,queued in ipairs(self.state.items) do
+                        if queued==item then table.remove(self.state.items,index); break end
+                    end
+                end
                 item.cancel_requested=nil; item.pause_requested=nil; item.resume_after_pause=nil
+                item.remove_after_cancel=nil
                 self.active_items[item]=nil; self.controllers[item]=nil; self.active=nil
                 for active in pairs(self.active_items) do self.active=self.active or active end
                 self:save(); self:run()
@@ -108,10 +123,19 @@ function Queue:run()
     self.pumping=false
 end
 function Queue:cancel(item)
-    if item.status=="queued" then item.status="cancelled"; self:save(); return true end
-    if item.status=="paused" then item.status="cancelled"; item.pause_requested=nil; item.resume_after_pause=nil; self:save(); return true end
+    if item.status=="queued" or item.status=="paused" then
+        for index,queued in ipairs(self.state.items) do
+            if queued==item then
+                table.remove(self.state.items,index)
+                if not self:save() then table.insert(self.state.items,index,item); return nil,"Could not save queue" end
+                return true
+            end
+        end
+        return nil,"Download not found"
+    end
     if self.active_items[item] and item.status=="running" then
-        item.cancel_requested=true; self:save()
+        item.cancel_requested=true; item.remove_after_cancel=true
+        if not self:save() then item.cancel_requested=nil; item.remove_after_cancel=nil; return nil,"Could not save queue" end
         local controller=self.controllers[item]
         if controller and controller.cancel then controller:cancel() end
         return true
@@ -164,19 +188,31 @@ function Queue:resume(item)
     return nil,"Download is not paused"
 end
 function Queue:cancelManga(source_id,manga_id)
-    local count,controllers=0,{}
+    local count,controllers,original,original_flags=0,{},{},{}
     for _,item in ipairs(self.state.items) do
+        original[#original+1]=item
+        original_flags[item]={cancel_requested=item.cancel_requested,remove_after_cancel=item.remove_after_cancel,pause_requested=item.pause_requested,resume_after_pause=item.resume_after_pause}
+    end
+    for index=#self.state.items,1,-1 do
+        local item=self.state.items[index]
         if item.manga.source_id==source_id and item.manga.id==manga_id then
             if item.status=="queued" or item.status=="paused" then
-                item.status="cancelled"; item.error=nil; item.pause_requested=nil; item.resume_after_pause=nil; count=count+1
+                table.remove(self.state.items,index); count=count+1
             elseif item.status=="running" and not item.cancel_requested then
-                item.cancel_requested=true; item.pause_requested=nil; item.resume_after_pause=nil; count=count+1
+                item.cancel_requested=true; item.remove_after_cancel=true; item.pause_requested=nil; item.resume_after_pause=nil; count=count+1
                 local controller=self.controllers[item]
                 if controller and controller.cancel then controllers[#controllers+1]=controller end
             end
         end
     end
-    if count>0 then self:save() end
+    if count>0 and not self:save() then
+        self.state.items=original
+        for item,flags in pairs(original_flags) do
+            item.cancel_requested=flags.cancel_requested; item.remove_after_cancel=flags.remove_after_cancel
+            item.pause_requested=flags.pause_requested; item.resume_after_pause=flags.resume_after_pause
+        end
+        return 0
+    end
     for _,controller in ipairs(controllers) do pcall(controller.cancel,controller) end
     return count
 end

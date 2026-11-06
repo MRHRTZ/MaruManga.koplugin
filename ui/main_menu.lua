@@ -13,6 +13,7 @@ local TextWidget = require("ui/widget/textwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local ScrollTextWidget = require("ui/widget/scrolltextwidget")
 local VerticalGroup = require("ui/widget/verticalgroup")
+local VerticalSpan = require("ui/widget/verticalspan")
 local UnderlineContainer = require("ui/widget/container/underlinecontainer")
 local UIManager = require("ui/uimanager")
 local Device = require("device")
@@ -232,7 +233,7 @@ function M.new(options)
             if page.on_close then pcall(page.on_close) end
             dialog:onClose()
         end}
-        local title_text=page.page_title and (page.page_title.." · Page "..page_index.." / "..page_count) or page.title or "MaruManga Downloader"
+        local title_text=page.page_title and (page.page_title.." · "..page_index.."/"..page_count) or page.title or "MaruManga Downloader"
         local left_reserved=page.backable and Screen:scaleBySize(56) or Screen:scaleBySize(12)
         local right_reserved=page.header_action and Screen:scaleBySize(108) or Screen:scaleBySize(56)
         local title_width=math.max(Screen:scaleBySize(120),inner_width-2*math.max(left_reserved,right_reserved))
@@ -342,6 +343,24 @@ function M.new(options)
                 if page.external_next.action then UIManager:nextTick(page.external_next.action) end
             end}
         end
+        if page.fill_height then
+            local natural_height=0
+            for _,row in ipairs(rows) do
+                local ok,size=pcall(row.getSize,row)
+                if ok and size and type(size.h)=="number" then natural_height=natural_height+size.h end
+            end
+            -- Keep manga details tall and centered while retaining a clear
+            -- top and bottom margin around the dialog.
+            local frame_chrome=2*(Size.padding.large+Size.margin.title)+Size.line.medium+2*Size.padding.button
+            local outer_margin=Screen:scaleBySize(56)
+            local available=Screen:getHeight()-2*outer_margin-frame_chrome
+            local filler=math.floor(available-natural_height)
+            if filler>0 then
+                local spacer=VerticalSpan:new{width=filler}
+                spacer.not_focusable=true
+                rows[#rows+1]=spacer
+            end
+        end
         -- ButtonDialog's `reinit` rebuilds its inner MovableContainer. Replace
         -- the visible instance through UIManager so the old frame cannot remain
         -- painted underneath the new page. Reuse this same dialog object.
@@ -367,7 +386,7 @@ function M.new(options)
         elseif settings.push~=false and self.current_page then
             self.page_stack[#self.page_stack+1]=self.current_page
         end
-        self.current_page={title=title,items=items or {},mascot=settings.mascot,hero=settings.hero,hero_icon=settings.hero_icon,description=settings.description,on_page=settings.on_page,on_back=settings.on_back,on_close=settings.on_close,header_action=settings.header_action,page_limit=settings.page_limit,page_index=1,grid=settings.grid,page_title=settings.page_title,external_next=settings.external_next,backable=not settings.root}
+        self.current_page={title=title,items=items or {},mascot=settings.mascot,hero=settings.hero,hero_icon=settings.hero_icon,description=settings.description,on_page=settings.on_page,on_back=settings.on_back,on_close=settings.on_close,header_action=settings.header_action,page_limit=settings.page_limit,page_index=1,grid=settings.grid,page_title=settings.page_title,external_next=settings.external_next,fill_height=settings.fill_height,backable=not settings.root}
         if settings.root then self.root_page=self.current_page end
         self:renderCurrentPage()
         if settings.show then UIManager:show(self); self.visible=true end

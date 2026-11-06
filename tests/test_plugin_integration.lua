@@ -17,7 +17,7 @@ package.preload["ui/widget/checkbutton"]=function() return {new=function(_,v) re
 package.preload["ui/widget/inputdialog"]=function() return {new=function(_,v) v.onShowKeyboard=function() end; return v end} end
 package.preload["ui/widget/titlebar"]=function() return {new=function(_,v) return v end} end
 local function simple_widget() return {new=function(_,v) return v or {} end} end
-for _,name in ipairs({"ui/widget/container/centercontainer","ui/widget/container/framecontainer","ui/widget/horizontalgroup","ui/widget/horizontalspan","ui/widget/imagewidget","ui/widget/container/leftcontainer","ui/widget/overlapgroup","ui/widget/container/rightcontainer","ui/widget/textwidget","ui/widget/scrolltextwidget","ui/widget/verticalgroup","ui/widget/container/underlinecontainer","ui/geometry","ui/gesturerange"}) do
+for _,name in ipairs({"ui/widget/container/centercontainer","ui/widget/container/framecontainer","ui/widget/horizontalgroup","ui/widget/horizontalspan","ui/widget/imagewidget","ui/widget/container/leftcontainer","ui/widget/overlapgroup","ui/widget/container/rightcontainer","ui/widget/textwidget","ui/widget/scrolltextwidget","ui/widget/verticalgroup","ui/widget/verticalspan","ui/widget/container/underlinecontainer","ui/geometry","ui/gesturerange"}) do
     package.preload[name]=simple_widget
 end
 package.preload["ui/widget/textboxwidget"]=function() return {new=function(_,options)
@@ -94,7 +94,7 @@ local default_profile_count=#plugin.config.data.profiles; assert(plugin:installD
 assert(plugin:profile("mangago") and plugin:profile("mangago").enabled==false)
 local real_refresh=plugin.refreshRepository; local auto_refresh=false
 plugin.default_refresh_started=nil; plugin.refreshRepository=function(_,repo,options) assert(repo.url:find("raw.githubusercontent.com",1,true)); auto_refresh=true; options.callback(true) end
-plugin:showRepositories(); assert(widgets[#widgets].title=="Repositories")
+plugin:showRepositories(); assert(widgets[#widgets].title=="Repositories (1)")
 plugin.repositories.data.default_repository.unreachable=nil; plugin.repositories.data.default_repository.last_error=nil; plugin.refreshRepository=real_refresh
 assert(plugin.config:addProfile({id="example",name="Example",base_url="https://example.org",kind="generic",search_path="/?q={query}&page={page}",popular_path="/popular?page={page}",latest_path="/latest?page={page}",list_selector="article",list_link_selector="a",list_title_selector="span",list_cover_selector="img",title_selector="h1",description_selector=".summary__content",chapter_selector="li.chapter a",page_selector=".reader img"}))
 plugin.config.data.source="example"
@@ -106,7 +106,7 @@ source.transport.get=function(_,url,cb)
 end
 plugin:openDiscover(); local discover=widgets[#widgets]; assert(discover.title=="Discover" and #discover.item_table==4)
 local manage_item=discover.item_table[4]; assert(manage_item.text=="Manage Sources" and manage_item.group_end); manage_item.action()
-local manage_menu=widgets[#widgets]; assert(manage_menu.title=="Manage Sources · Page 1 / 1" and #manage_menu.item_table==#plugin.config.data.profiles+2)
+local manage_menu=widgets[#widgets]; assert(manage_menu.title=="Manage Sources · 1/1" and #manage_menu.item_table==#plugin.config.data.profiles+2)
 local example_item; for _,item in ipairs(manage_menu.item_table) do if item.text:find("Example",1,true) then example_item=item end end
 assert(example_item and example_item.state and example_item.action); example_item.action()
 manage_menu=widgets[#widgets]
@@ -162,7 +162,7 @@ assert(add and chapters and download_all); assert(detail.item_table[6]==download
 assert(detail.item_table[1].maru_key=="Author" and detail.item_table[1].maru_value=="Unknown")
 local has_cover_action=false; for _,item in ipairs(detail.item_table) do if type(item.text)=="string" and item.text:lower():find("view cover",1,true) then has_cover_action=true end end; assert(not has_cover_action)
 source.getChapterList=function(_,manga,page,callback) callback({items={{id="chapter-1",manga_id=manga.id,name="Chapter 1"}},has_next=false}) end
-chapters.action(); local list=widgets[#widgets]; assert(list.title:match("Series") and #list.item_table>=2 and list.page_limit==3)
+chapters.action(); local list=widgets[#widgets]; assert(list.title:match("Series") and #list.item_table>=2 and list.page_limit==6 and list.fill_height)
 plugin:loadList("Popular",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
 local popular=widgets[#widgets]; assert(popular.title=="Popular" and popular.item_table[1].maru_manga.title=="Series" and popular.page_limit==4)
 results.items[1].latest_chapter="Chapter 23"
@@ -210,7 +210,7 @@ assert(plugin.repositories:update(repo,catalog))
 plugin:showRepositories(); local repos_menu=widgets[#widgets]; assert(repos_menu.item_table[5].text:find("Fixture",1,true)); assert(repos_menu.item_group[3]._underline_container.linesize==1); repos_menu.item_table[5].action()
 local repo_menu=widgets[#widgets]; assert(repo_menu.title=="Fixture")
 assert(repo_menu.item_table[9].text:find("Sources: 1",1,true)); repo_menu.item_table[9].action()
-local source_menu=widgets[#widgets]; assert(source_menu.title=="Fixture · Sources · Page 1")
+local source_menu=widgets[#widgets]; assert(source_menu.title=="Fixture · Sources · 1/1")
 local has_tag=false; for _,item in ipairs(source_menu.item_table) do if item.text:find("NSFW",1,true) and item.text:find("EN%-ID") then has_tag=true end end; assert(has_tag)
 local catalog_source=source_menu.item_table[#source_menu.item_table]; assert(catalog_source.action and catalog_source.state)
 plugin:catalogSourceDialog(repo,{id="incomplete",name="Incomplete",version=1,adapter="generic",base_url="https://example.org",profile={search_path="/"}})
