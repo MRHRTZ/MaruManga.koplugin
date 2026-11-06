@@ -9,6 +9,9 @@
 - Improved chapter loading and pagination, including responsive chapter list sizing.
 - Updated Komiku parser defaults for chapter and page selectors to match its current page structure.
 - Changed the KOReader Tools entry to **MaruManga**.
+- Added chapter **Preview**, which opens a temporary CBZ in KOReader without adding it to Downloads or Library; temporary preview files are cleared on the next preview or plugin initialization.
+- Added the missing Download action icon and a distinct Preview icon. Preview progress now uses the shorter `Fetching pages... (2/59)` label.
+- Added manga status beside the latest chapter on Search, Popular, Latest updates, and Library cards; status is left blank when the source has no value.
 - Updated installation and feature documentation.
 
 ## Notes

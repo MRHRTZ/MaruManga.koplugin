@@ -199,8 +199,13 @@ plugin.main_menu=nil; plugin.panel_enabled=false
 plugin:loadList("Popular",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
 local popular=widgets[#widgets]; assert(popular.title=="Popular" and popular.item_table[1].maru_manga.title=="Series" and popular.page_limit==4)
 results.items[1].latest_chapter="Chapter 23"
+results.items[1].status="Ongoing"
 plugin:loadList("Search",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
-assert(widgets[#widgets].item_table[1].maru_progress=="Chapter 23")
+assert(widgets[#widgets].item_table[1].maru_progress=="Ongoing · Chapter 23")
+results.items[1].status="End"
+plugin:loadList("Popular",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
+assert(widgets[#widgets].item_table[1].maru_progress=="End · Chapter 23")
+results.items[1].status=nil
 results.items[1].cover_url="https://example.org/list-cover.jpg"
 local original_cache,original_details=plugin.cacheCover,source.getMangaDetails
 plugin.cacheCover=function(_,manga,callback)
@@ -304,12 +309,14 @@ assert(incomplete and updates.item_table[1].text=="Not downloaded: 1")
 plugin.library.data.archives["/broken/entry.cbz"]={manga={},chapter={chapter_number=1}}
 local saved_key,saved_manga=next(plugin.library.data.manga)
 saved_manga.genres={"Action",{unexpected=true}}
+saved_manga.status="Ongoing"
 plugin:showLibrary()
 local resilient_library=widgets[#widgets]
 assert(resilient_library.title=="Library" and #resilient_library.item_table==1)
 assert(resilient_library.item_table[1].maru_meta:find("Action",1,true))
+assert(resilient_library.item_table[1].maru_progress:find("Ongoing · Chapter ",1,true))
 plugin.library.data.archives["/broken/entry.cbz"]=nil
-saved_manga.genres={}
+saved_manga.genres={}; saved_manga.status=nil
 plugin.source=original_source
 os.remove(settings_dir.."/marumanga.lua"); os.remove(settings_dir.."/marumanga.lua.old"); os.remove(settings_dir.."/marumanga.lua.new"); os.execute("rmdir "..settings_dir)
 print("Plugin source integration tests passed")

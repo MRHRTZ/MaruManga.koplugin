@@ -23,7 +23,7 @@ For Android, the plugin directory is normally under KOReader's application data.
 2. Open **Discover > Manage Sources**, check the sources to enable, then choose **Save**. Search, Popular, and Latest updates only offer enabled sources. Other configured repositories can provide additional compatible generic profiles.
 3. Open **Discover**, choose Search, Popular, or Latest updates, and open a manga card.
 4. On the manga details page choose **Add to Library**.
-5. Choose **Download All Chapters** to queue all missing chapters, or open **Chapters** and download selected chapters. Chapters merge into a single `manga.cbz` for that title. Downloads can be monitored, refreshed, paused, continued, or cancelled from **Downloads**.
+5. Choose **Download All Chapters** to queue all missing chapters, or open **Chapters** and select a chapter. Choose **Preview** to open that chapter in KOReader without adding it to Downloads or the Library, or choose **Download** to save it. Preview CBZ files are temporary cache and are cleared when another preview starts or MaruManga initializes. Downloaded chapters merge into a single `manga.cbz` for that title. Downloads can be monitored, refreshed, paused, continued, or cancelled from **Downloads**.
 6. Open **Library > Browse library**, select a title, then choose **Read Manga** to open its local CBZ in KOReader. The plugin blocks opening while that archive is being modified.
 7. Use **Library > Check Updates** to compare bookmarked titles with their source. Already downloaded chapters are excluded from the new chapter count and can be queued for download.
 

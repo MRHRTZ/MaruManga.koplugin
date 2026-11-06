@@ -19,7 +19,7 @@ local function clickable(items)
         {"next page", "next-page"}, {"previous page", "back"},
         {"search", "search"}, {"filter", "filter"}, {"install", "add"}, {"add", "add"},
         {"delete", "delete"}, {"uninstall", "delete"}, {"remove", "delete"},
-        {"download", "downloads"}, {"retry", "refresh"}, {"refresh", "refresh"},
+        {"download all", "download-all"}, {"download", "download"}, {"retry", "refresh"}, {"refresh", "refresh"},
         {"update", "refresh"}, {"enable", "toggle"}, {"disable", "toggle"},
         {"language", "language"}, {"source", "source"}, {"repository", "repositories"},
         {"setting", "settings"}, {"edit", "edit"}, {"save", "save"}, {"reset", "refresh"},
@@ -118,6 +118,18 @@ local function languageLabel(languages)
     end
     return table.concat(codes,"-")
 end
+local function mangaStatus(value)
+    if type(value)~="string" then return "" end
+    value=value:gsub("^%s+",""):gsub("%s+$","")
+    if value=="" then return "" end
+    local normalized=value:lower()
+    if normalized:find("ongoing",1,true) or normalized:find("publishing",1,true)
+        or normalized:find("current",1,true) or normalized:find("serializ",1,true) then return _("Ongoing") end
+    if normalized=="end" or normalized:find("ended",1,true) or normalized:find("completed",1,true)
+        or normalized:find("complete",1,true) or normalized:find("finished",1,true)
+        or normalized:find("selesai",1,true) or normalized:find("tamat",1,true) then return _("End") end
+    return value
+end
 local function sourceIconUrl(entry)
     if type(entry)~="table" then return nil end
     if type(entry.icon_url)=="string" then return entry.icon_url end
@@ -195,6 +207,7 @@ function MaruManga:init()
         local ok,err=pcall(self.installDefaultCatalogSources,self)
         if not ok then self.default_source_install_error=tostring(err) end
     end
+    if self.config then pcall(self.clearPreviewCache,self) end
     self.downloads, self.download_error = DownloadQueue.open(store,function(item,done)
         return self:startChapter(item.manga,item.chapter,done,item)
     end,function() return self.config and self.config.data.download_concurrency or 2 end)
@@ -548,7 +561,9 @@ function MaruManga:loadList(title, fetch, convert, page, options)
                 local latest=item.latest_chapter or item.latestChapter or item.chapter or ""
                 if type(latest)=="table" then latest=latest.name or latest.title or latest.chapter_number or "" end
                 if latest~="" and not tostring(latest):lower():find("chapter",1,true) and not tostring(latest):lower():match("^ch[%s%.]?") then latest="Chapter "..tostring(latest) end
-                items[#items+1] = {text=convert(item),maru_title=item.title or convert(item),maru_meta=(source and source:getName() or item.source_id)..(#languages>0 and (" · "..languageLabel(languages)) or ""),maru_progress=latest~="" and tostring(latest) or "",maru_manga=item,maru_image=self:findCachedCover(item),action=function() self:showManga(item) end}
+                local status=mangaStatus(item.status)
+                local progress=(status~="" and (status..(latest~="" and " · " or "")) or "")..(latest~="" and tostring(latest) or "")
+                items[#items+1] = {text=convert(item),maru_title=item.title or convert(item),maru_meta=(source and source:getName() or item.source_id)..(#languages>0 and (" · "..languageLabel(languages)) or ""),maru_progress=progress,maru_manga=item,maru_image=self:findCachedCover(item),action=function() self:showManga(item) end}
             end
             local has_results=#items>0
             if not has_results then items[#items+1]={text=_("No matching titles"),maru_no_icon=true} end
@@ -728,7 +743,7 @@ function MaruManga:chapters(manga, page, order, replace_page)
             end
             local date=type(c.upload_date)=="number" and (" · " .. os.date("%Y-%m-%d",c.upload_date)) or ""
             items[#items+1] = {text=c.name .. (chapter_status and chapter_status.read and " · ✓" or "") .. (downloaded and " · ↓" or "") .. date .. (c.scanlator and (" · " .. c.scanlator) or ""), action=function()
-                local actions={}
+                local actions={{text=_("Preview"),icon=path.."images/menu/preview.svg",action=function() self:previewChapter(manga,c) end}}
                 if downloaded then
                     actions[#actions+1]={text=_("Read Manga"),icon=path.."images/menu/book.svg",action=function() self:openDownloaded(manga,c) end}
                     actions[#actions+1]={text=_("Verify downloaded file"),icon=path.."images/menu/verify.svg",action=function() self:verifyDownload(manga,c) end}
@@ -769,6 +784,90 @@ function MaruManga:chapters(manga, page, order, replace_page)
     UIManager:nextTick(function()
         local ok, err=pcall(source.getChapterList,source,manga,page,onChapters,order)
         if not ok then closeLoading(); self:notice(err or _("Could not load chapters.")) end
+    end)
+end
+function MaruManga:previewChapter(manga,chapter)
+    local active=self:source(manga.source_id)
+    if not active then return end
+    if type(manga.source_id)~="string" or not manga.source_id:match("^[%w_-]+$")
+        or type(manga.id)~="string" or not manga.id:match("^[%w_-]+$")
+        or type(chapter.id)~="string" or not chapter.id:match("^[%w_-]+$") then
+        return self:notice(_("This chapter has an invalid ID and cannot be previewed."))
+    end
+    local lfs=require("libs/libkoreader-lfs")
+    local preview_dir=self:appDataRoot().."/cache/previews"
+    local function ensureDir(dir)
+        local mode=(lfs.symlinkattributes or lfs.attributes)(dir,"mode")
+        if mode=="directory" then return true end
+        if mode then return nil end
+        local parent=dir:match("^(.*)/[^/]+$")
+        if not parent or parent==dir then return nil end
+        local ok=ensureDir(parent)
+        if not ok then return nil end
+        return lfs.mkdir(dir)
+    end
+    if not ensureDir(preview_dir) then return self:notice(_("Could not create temporary preview storage.")) end
+    -- Clear any archive left by a prior preview or KOReader session.
+    self:clearPreviewCache()
+    local sequence=(self.preview_sequence or 0)+1; self.preview_sequence=sequence
+    local stem=table.concat({"preview",manga.source_id,manga.id,chapter.id,tostring(os.time()),tostring(sequence)},"-")
+    local target=preview_dir.."/"..stem..".cbz"
+    local staging=preview_dir.."/."..stem..".staging"
+    if not lfs.mkdir(staging) then return self:notice(_("Could not prepare temporary chapter preview.")) end
+    local loading=loadingMessage(_("Loading chapter preview…")); show(loading)
+    local loading_open=true
+    local function closeLoading()
+        if loading_open then loading_open=false; UIManager:close(loading) end
+    end
+    local function cleanup()
+        local listed,files,dir_state=pcall(lfs.dir,staging)
+        if listed and files then for file in files,dir_state do if file:match("^%d%d%d%d%d%d%.image$") then os.remove(staging.."/"..file) end end end
+        pcall(lfs.rmdir,staging)
+    end
+    local fs=self:filesystem()
+    fs.verifyEntry=dofile(path.."reader/archive_integrity.lua").verifyEntry
+    local downloader=Downloader.new(require("ui/trapper"),SecureRequest,function() return self:dependenciesFor(manga.source_id) end,nil,self:runner(),self.config.data.timeout*2+15)
+    local preview_source={getPageList=function(_,current,callback) return active:getPageList(current,callback) end}
+    local function finishPreview(pages,err)
+        if type(pages)~="table" or #pages==0 then closeLoading(); cleanup(); return self:notice(err or _("No preview pages were returned.")) end
+        local function download(page,file,limit,callback)
+            local copy={}; for key,value in pairs(page) do copy[key]=value end
+            copy.headers={}; for key,value in pairs(page.headers or {}) do copy.headers[key]=value end
+            local jar=active.transport and active.transport.cookies
+            local cookie=jar and jar:header(page.image_url); if cookie then copy.headers.Cookie=cookie end
+            return downloader(copy,file,limit,callback)
+        end
+        local staged={
+            pathFor=function(index) return staging.."/"..string.format("%06d",index)..".image" end,
+            download=download,remove=fs.remove,validate=ImageValidation.validate,
+            max_pages=200,max_image_bytes=20971520,
+            progress=function(current,total) loading:updateText(_("Fetching pages... (")..current.."/"..total..")") end,
+            build=function() return nil,_ ("Preview archive creation failed") end,
+            buildAsync=function(_,items,callback)
+                return self:runner().run(function()
+                    return Builder.build(require("ffi/archiver"),fs,target,items,chapter.name)
+                end,600,function(ran,result,why,runner_error)
+                    if not ran then return callback(nil,runner_error or why or _("Preview archive creation failed")) end
+                    callback(result,why)
+                end)
+            end,
+        }
+        local started,job=pcall(Stager.start,staged,pages,target,function(built,failure)
+            cleanup(); closeLoading()
+            if not built then os.remove(target); os.remove(target..".part"); return self:notice(failure or _("Could not prepare chapter preview.")) end
+            -- Temporary CBZ is opened by KOReader's normal comic reader and is
+            -- intentionally not registered as a download or library archive.
+            if self.panel_enabled and self.main_menu then self.panel_enabled=false; self.main_menu.visible=false; UIManager:close(self.main_menu) end
+            local opened,open_err=pcall(function() require("apps/reader/readerui"):showReader(target) end)
+            if not opened then os.remove(target); self:notice(open_err or _("Could not open chapter preview.")) end
+        end)
+        if not started then cleanup(); closeLoading(); return self:notice(job or _("Could not start chapter preview.")) end
+    end
+    local called=false
+    local function onPages(pages,err) if called then return end; called=true; finishPreview(pages,err) end
+    UIManager:nextTick(function()
+        local started,err=pcall(preview_source.getPageList,preview_source,chapter,onPages)
+        if not started then onPages(nil,err) end
     end)
 end
 function MaruManga:downloadAllChapters(manga)
@@ -853,6 +952,25 @@ function MaruManga:downloadRoot()
 end
 function MaruManga:appDataRoot()
     return self:downloadRoot().."/.marumanga"
+end
+function MaruManga:clearPreviewCache()
+    local lfs=require("libs/libkoreader-lfs")
+    local directory=self:appDataRoot().."/cache/previews"
+    if (lfs.symlinkattributes or lfs.attributes)(directory,"mode")~="directory" then return end
+    local ok,iterator,state=pcall(lfs.dir,directory)
+    if not ok or not iterator then return end
+    for name in iterator,state do
+        if name:match("^preview%-[%w_-]+%.cbz%.part$") or name:match("^preview%-[%w_-]+%.cbz$") then
+            os.remove(directory.."/"..name)
+        elseif name:match("^%.preview%-[%w_-]+%.staging$") then
+            local staging=directory.."/"..name
+            local listed,files,dir_state=pcall(lfs.dir,staging)
+            if listed and files then
+                for file in files,dir_state do if file:match("^%d%d%d%d%d%d%.image$") then os.remove(staging.."/"..file) end end
+            end
+            pcall(lfs.rmdir,staging)
+        end
+    end
 end
 function MaruManga:filesystem()
     local ffi=require("ffi")
@@ -1610,8 +1728,9 @@ function MaruManga:showLibrary(query,sort,filter,replace_page)
         elseif latest_count==nil then chapter_count=tostring(downloaded_count).."/?"
         else chapter_count=tostring(known_downloaded).."/"..tostring(latest_count) end
         local state_icon=missing_count==nil and "badge-check" or state==_("Update Available") and "badge-update" or "badge-latest"
-        local meta=(entry.status or _("Unknown"))..(genres~="" and (" · "..genres) or "")
-        local progress=_("Chapter ")..chapter_count.." · "..state
+        local status=mangaStatus(entry.status)
+        local meta=genres
+        local progress=(status~="" and (status.." · ") or "").._("Chapter ")..chapter_count.." · "..state
         items[#items+1]={text=entry.title,maru_icon="manga",maru_badge=state_icon,maru_title=entry.title,maru_meta=meta,maru_progress=progress,maru_manga=entry,maru_image=self:findCachedCover(entry),action=function()
             self:menu(entry.title, {
                 {text=_("Saved details"),action=function()
