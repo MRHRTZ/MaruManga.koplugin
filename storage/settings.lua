@@ -6,8 +6,7 @@ local DEFAULT_REPOSITORY_URL = "https://raw.githubusercontent.com/MRHRTZ/maru-ma
 local function defaultKomiku()
     return {id="komiku",name="Komiku",kind="komiku",base_url="https://komiku.org",api_url="https://api.komiku.org",languages={"id"},image_hosts={"thumbnail.komiku.to","thumbnail.komiku.org","img.komiku.org","image.komiku.org","update.komiku.org","komikid.org"},enabled=true,repository_url=DEFAULT_REPOSITORY_URL,repository_version=3}
 end
-local function defaults() return {version=current, language="en", source="komiku", profiles={defaultKomiku()}, auto_installed_source_ids={}, download_concurrency=2, ignore_ssl_certificates=false,dns_mode="auto",mangadex_installed=false,mangadex_enabled=false} end
-local function valid_language(s) return type(s) == "string" and #s >= 2 and #s <= 12 and s:match("^[a-z][a-z%-]*$") end
+local function defaults() return {version=current, source="komiku", profiles={defaultKomiku()}, auto_installed_source_ids={}, download_concurrency=2, ignore_ssl_certificates=false,dns_mode="auto",mangadex_installed=false,mangadex_enabled=false} end
 local function valid_dns_server(server)
     if type(server)~="string" then return false end
     local count=0
@@ -75,7 +74,7 @@ function Settings.open(store)
     for _,id in ipairs(type(raw.auto_installed_source_ids)=="table" and raw.auto_installed_source_ids or {}) do
         if type(id)=="string" and id:match("^[%w_-]+$") and id~="mangadex" then auto_installed_source_ids[#auto_installed_source_ids+1]=id end
     end
-    local result = {version=current, language=valid_language(raw.language) and raw.language or "en", source=selected_source, profiles=profiles, auto_installed_source_ids=auto_installed_source_ids, mangadex_installed=false, mangadex_enabled=false, timeout=type(raw.timeout)=="number" and raw.timeout>=5 and raw.timeout<=120 and raw.timeout or 15,
+    local result = {version=current, source=selected_source, profiles=profiles, auto_installed_source_ids=auto_installed_source_ids, mangadex_installed=false, mangadex_enabled=false, timeout=type(raw.timeout)=="number" and raw.timeout>=5 and raw.timeout<=120 and raw.timeout or 15,
         retries=type(raw.retries)=="number" and raw.retries>=1 and raw.retries<=5 and raw.retries or 3,
         user_agent=type(raw.user_agent)=="string" and #raw.user_agent<=200 and not raw.user_agent:find("[%c]") and raw.user_agent or "MaruMangaDownloader/0.1 (KOReader)",
         download_dir=type(raw.download_dir)=="string" and raw.download_dir:match("^/") and not raw.download_dir:find("%.%.") and not raw.download_dir:find("[%c]") and raw.download_dir or nil,
@@ -83,11 +82,6 @@ function Settings.open(store)
         ignore_ssl_certificates=raw.ignore_ssl_certificates==true,
         dns_mode=dns_mode,dns_server=dns_server}
     return setmetatable({store=store, data=result}, Settings)
-end
-function Settings:setLanguage(language)
-    if not valid_language(language) then return nil, "Invalid language" end
-    self.data.language = language
-    return true
 end
 function Settings:setNetwork(timeout,retries,user_agent,download_dir,download_concurrency,ignore_ssl_certificates)
     timeout,retries=tonumber(timeout),tonumber(retries)

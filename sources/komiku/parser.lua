@@ -9,6 +9,11 @@ function Parser.new(html,resolve,clean,profile,digest)
     profile.list_link_selector=profile.list_link_selector or "a"
     profile.list_title_selector=profile.list_title_selector or "h3"
     profile.list_cover_selector=profile.list_cover_selector or "img"
+    profile.chapter_selector=profile.chapter_selector or "#Daftar_Chapter tr"
+    profile.chapter_link_selector=profile.chapter_link_selector or "a"
+    profile.chapter_attribute=profile.chapter_attribute or "href"
+    profile.page_selector=profile.page_selector or "#Baca_Komik img"
+    profile.page_attribute=profile.page_attribute or "src"
     -- Komiku's current server-rendered markup exposes author/status in
     -- microdata and table rows. These selectors override old installed
     -- catalogs that used unsupported CSS :contains() pseudo-selectors.

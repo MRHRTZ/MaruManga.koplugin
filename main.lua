@@ -25,7 +25,8 @@ local function clickable(items)
         {"setting", "settings"}, {"edit", "edit"}, {"save", "save"}, {"reset", "refresh"},
         {"chapter", "chapter"}, {"manga", "manga"}, {"cover", "manga"},
         {"read", "book"}, {"open", "book"}, {"view", "details"}, {"detail", "details"},
-        {"verify", "verify"}, {"check", "refresh"}, {"popular", "discover"},
+        {"verify", "verify"}, {"check", "refresh"}, {"export", "export"}, {"import", "import"},
+        {"compatibility", "compatibility"}, {"integrity", "verify"}, {"popular", "discover"},
         {"latest", "discover"}, {"discover", "discover"}, {"cancel", "close"},
         {"back", "back"}, {"retry", "refresh"},
     }
@@ -53,6 +54,14 @@ local ButtonDialog = require("ui/widget/buttondialog")
 local InputDialog = require("ui/widget/inputdialog")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
 local _ = require("gettext")
+local function previousPageLabel(page,page_count)
+    local label=_("Previous page")
+    if page==page_count then return label.." ("..page.."/"..page_count..")" end
+    return label
+end
+local function nextPageLabel(page,page_count)
+    return _("Next page").." ("..page.."/"..page_count..")"
+end
 local MainMenu = dofile(path .. "ui/main_menu.lua")
 local GenericParser = dofile(path .. "sources/generic/parser.lua")
 local GenericSource = dofile(path .. "sources/generic/source.lua")
@@ -84,6 +93,8 @@ local Uninstaller = dofile(path .. "core/uninstaller.lua")
 local LocalArchive = dofile(path .. "core/local_archive.lua")
 local DetailFields = dofile(path .. "core/detail_fields.lua")
 local ArchiveCheck = dofile(path .. "reader/archive_check.lua")
+local Migration = dofile(path .. "storage/migration.lua")
+local MigrationArchive = dofile(path .. "reader/migration_archive.lua")
 local FileSystem = dofile(path .. "reader/filesystem.lua")
 local Downloader = dofile(path .. "network/image_downloader.lua")
 local DownloadQueue = dofile(path .. "core/download_queue.lua")
@@ -123,10 +134,13 @@ local function bundledSourceIcon(entry)
 end
 local function sourceCompatibilityIssue(entry)
     if type(entry)~="table" then return _("Invalid source catalog entry") end
+    if type(entry.id)~="string" or not entry.id:match("^[%w_-]+$") then return _("Invalid source ID") end
+    if type(entry.base_url)~="string" or not entry.base_url:match("^https://[%w%.%-]+$") then return _("Invalid HTTPS base URL") end
     if entry.adapter=="planned" then return _("This source is planned but has no adapter") end
+    local supported={komiku=true,mangamost=true,mangago=true,mangarock=true,webtoon=true,westmanga=true,generic=true,madara=true}
+    if not supported[entry.adapter] then return _("This plugin version does not support the source adapter") end
     if entry.adapter=="generic" or entry.adapter=="madara" then
-        local profile=entry.profile or {}
-        local missing={}
+        local profile=entry.profile or {}; local missing={}
         local function has_path(key,query)
             local value=profile[key]
             if type(value)~="string" then return false end
@@ -140,8 +154,6 @@ local function sourceCompatibilityIssue(entry)
         if type(profile.chapter_selector)~="string" or profile.chapter_selector=="" then missing[#missing+1]=_("chapter selector") end
         if type(profile.page_selector)~="string" or profile.page_selector=="" then missing[#missing+1]=_("page image selector") end
         if #missing>0 then return _("Missing profile fields: ")..table.concat(missing,", ") end
-    elseif entry.adapter~="komiku" and entry.adapter~="mangamost" and entry.adapter~="mangago" and entry.adapter~="mangarock" and entry.adapter~="webtoon" and entry.adapter~="westmanga" then
-        return _("This plugin version does not support the source adapter")
     end
 end
 local MaruManga = WidgetContainer:extend{ name="marumanga", is_doc_only=false }
@@ -164,7 +176,7 @@ local function loadingMessage(text)
     end
     return message
 end
-local PLUGIN_VERSION="0.3.1"
+local PLUGIN_VERSION="0.3.2"
 local PLUGIN_LAST_UPDATE="2026-11-05"
 function MaruManga:init()
     self.ui.menu:registerToMainMenu(self)
@@ -175,6 +187,7 @@ function MaruManga:init()
         return
     end
     SafeSettings.wrap(store,require("dump"),require("ffi/util"))
+    self.settings_store=store
     self.config, self.config_error = Settings.open(store)
     self.library, self.library_error = Library.open(store)
     self.repositories, self.repository_error = Repositories.open(store)
@@ -340,6 +353,13 @@ function MaruManga:menu(title, items, selected, grouped, replace_page, page_opti
     end
     show(menu)
     return menu
+end
+function MaruManga:backPage()
+    if self.panel_enabled and self.main_menu and self.main_menu.visible and type(self.main_menu.goBack)=="function" then
+        self.main_menu:goBack()
+        return true
+    end
+    return false
 end
 function MaruManga:findCachedCover(manga)
     if type(manga)~="table" or type(manga.source_id)~="string" or type(manga.id)~="string" then return nil end
@@ -532,11 +552,14 @@ function MaruManga:loadList(title, fetch, convert, page, options)
             end
             local has_results=#items>0
             if not has_results then items[#items+1]={text=_("No matching titles"),maru_no_icon=true} end
-            local external_next=options.external_next or {text=_("Load more results"),action=function() self:loadList(title,fetch,convert,page+1,options) end}
+            local next_options={}
+            for key,value in pairs(options) do if key~="external_next" then next_options[key]=value end end
+            next_options.replace_page=true
+            local external_next=options.external_next or {text=_("Load more results"),action=function() self:loadList(title,fetch,convert,page+1,next_options) end}
             -- Keep search result pages to two card rows on small e-ink screens.
             -- This avoids handing an oversized results page to KOReader's
             -- ButtonDialog layout immediately after the loading dialog closes.
-            self:menu(title, items,nil,false,nil,{grid=has_results,page_limit=4,page_title=has_results and title or nil,external_next=has_results and result.has_next and external_next or nil,on_page=function(first,last)
+            self:menu(title, items,nil,false,options.replace_page==true,{grid=has_results,page_limit=4,page_title=has_results and title or nil,external_next=has_results and result.has_next and external_next or nil,on_page=function(first,last)
                 self:prefetchVisibleCovers(items,first,last,self.main_menu and self.main_menu.current_page)
             end})
         end)
@@ -559,6 +582,7 @@ function MaruManga:searchAllManga(query,page)
         if not result then return self:notice(failure or first_error or _("Could not search enabled sources.")) end
         self:loadList(_("Search"),function(_,callback) callback(result) end,function(manga) return manga.title end,page,{
             no_loading=true,
+            replace_page=page>1,
             external_next={text=_("Load more results"),action=function() self:searchAllManga(query,page+1) end},
         })
     end
@@ -578,7 +602,7 @@ function MaruManga:searchAllManga(query,page)
         self:notice(err or _("Could not search enabled sources."))
     end
 end
-function MaruManga:showManga(manga)
+function MaruManga:showManga(manga,replace_page,context)
     local source = self:source(manga.source_id); if not source then return end
     local loading=loadingMessage(_("Loading manga details…")); show(loading)
     local loading_open=true
@@ -614,19 +638,23 @@ function MaruManga:showManga(manga)
                 items[#items+1]={text=_("Remove from library"),icon=path.."images/menu/library.svg",action=function()
                     if not self.library then return self:notice(self.library_error) end
                     local ok,failure=self.library:remove(detail.source_id,detail.id)
-                    if ok then self:showManga(detail) else self:notice(failure) end
+                    if not ok then return self:notice(failure) end
+                    if context and context.library then
+                        self:backPage(); self:backPage()
+                        self:showLibrary(context.query,context.sort,context.filter,self.panel_enabled)
+                    else self:showManga(detail,true,context) end
                 end}
             else
                 items[#items+1]={text=_("Add to library"),icon=path.."images/menu/library.svg",action=function()
                     if not self.library then return self:notice(self.library_error) end
                     local ok, failure = self.library:add(detail)
-                    if ok then self:showManga(detail) else self:notice(failure) end
+                    if ok then self:showManga(detail,true) else self:notice(failure) end
                 end}
             end
             local function showDetails(cover)
                 callbackGuard(function()
                     local description=present(detail.description)
-                    self:menu(detail.title,items,nil,false,nil,{
+                    self:menu(detail.title,items,nil,false,replace_page==true,{
                         hero=cover,
                         hero_icon=not cover,
                         -- Keep every detail action on one tall, centered panel.
@@ -672,16 +700,23 @@ function MaruManga:showCover(manga)
         open(target)
     end)
 end
-function MaruManga:chapters(manga, page, order)
+function MaruManga:chapters(manga, page, order, replace_page)
     order=order or "desc"
     local source = self:source(manga.source_id); if not source then return end
-    source:getChapterList(manga, page, function(result, err)
+    local loading=loadingMessage(_("Loading chapters..."))
+    show(loading)
+    local loading_open=true
+    local function closeLoading()
+        if loading_open then loading_open=false; UIManager:close(loading) end
+    end
+    local function onChapters(result, err)
+        closeLoading()
         if not result then return self:notice(err or _("Could not load chapters.")) end
         if self.library and self.library:contains(manga.source_id,manga.id) then
             local saved,save_error=self.library:cacheChapters(manga,result.items)
             if not saved then self:notice(save_error) end
         end
-        local items = {{text=order=="desc" and _("Sort: descending") or _("Sort: ascending"),icon=path.."images/menu/sort.svg",action=function() self:chapters(manga,1,order=="desc" and "asc" or "desc") end}}
+        local items = {{text=order=="desc" and _("Sort: descending") or _("Sort: ascending"),icon=path.."images/menu/sort.svg",action=function() self:chapters(manga,1,order=="desc" and "asc" or "desc",true) end}}
         for ignored_index, chapter in ipairs(result.items) do
             local c = chapter
             local downloaded=false
@@ -703,18 +738,38 @@ function MaruManga:chapters(manga, page, order)
                 self:menu(c.name,actions)
             end}
         end
-        if #items == 1 then items[2]={text=_("No chapters in the selected language")} end
-        if result.has_next then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg", action=function() self:chapters(manga, page+1, order) end} end
-        self:menu(manga.title .. " · " .. page, items,nil,false,nil,{
+        if #items == 1 then items[2]={text=_("No chapters found")} end
+        if result.has_next then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg", action=function() self:chapters(manga, page+1, order,true) end} end
+        local chapter_page_limit=6
+        local screen=require("device").screen
+        if screen and type(screen.getHeight)=="function" and type(screen.scaleBySize)=="function" then
+            local measured,limit=pcall(function()
+                local Size=require("ui/size")
+                local height=screen:getHeight()
+                local chrome=2*(Size.padding.large+Size.margin.title)+Size.line.medium+2*Size.padding.button
+                local available=height-2*screen:scaleBySize(56)-chrome
+                local header=screen:scaleBySize(56)
+                local row=screen:scaleBySize(62)
+                -- Reserve room for the title, page control, and one safety
+                -- row for chapter names that wrap on narrow screens.
+                return math.floor((available-header-2*row)/row)
+            end)
+            if measured and type(limit)=="number" then chapter_page_limit=math.max(6,math.min(16,limit)) end
+        end
+        self:menu(manga.title .. " · " .. page, items,nil,false,replace_page==true,{
             -- Chapter titles can wrap to multiple lines, particularly in
             -- WEBTOON listings. Keep each native dialog page short so
             -- ButtonDialog never enters its fragile custom-widget scroll grid.
-            page_limit=6,
+            page_limit=chapter_page_limit,
             page_title=manga.title,
             fill_height=true,
             header_action={icon=path.."images/menu/download-all.svg",callback=function() self:downloadAllChapters(manga) end},
         })
-    end,order)
+    end
+    UIManager:nextTick(function()
+        local ok, err=pcall(source.getChapterList,source,manga,page,onChapters,order)
+        if not ok then closeLoading(); self:notice(err or _("Could not load chapters.")) end
+    end)
 end
 function MaruManga:downloadAllChapters(manga)
     if not self.downloads then return self:notice(self.download_error) end
@@ -960,7 +1015,7 @@ function MaruManga:queueChapter(manga,chapter)
         text=_("Chapter added to the download queue. Open Downloads now?"),
         ok_text=_("Yes"),
         cancel_text=_("No"),
-        ok_callback=function() self:showDownloads() end,
+            ok_callback=function() self:backPage(); self:showDownloads() end,
     })
 end
 function MaruManga:askOpenDownloads(added,skipped)
@@ -971,7 +1026,7 @@ function MaruManga:askOpenDownloads(added,skipped)
         text=message.."\n\n".._("Open Downloads now?"),
         ok_text=_("Yes"),
         cancel_text=_("No"),
-        ok_callback=function() self:showDownloads() end,
+        ok_callback=function() self:backPage(); self:showDownloads() end,
     })
     return true
 end
@@ -994,7 +1049,7 @@ function MaruManga:addHtmlSource(kind)
         fields={{text="",hint=_("Source name")},{text="",hint=_("Source ID (letters and numbers)")},{text="",hint=_("HTTPS base URL")}},
         buttons={{{text=_("Cancel"),callback=function() UIManager:close(dialog) end},{text=_("Save"),callback=function()
             local fields=dialog:getFields()
-            local profile={name=fields[1],id=fields[2],base_url=fields[3],kind=kind,languages={self.config.data.language},enabled=true}
+            local profile={name=fields[1],id=fields[2],base_url=fields[3],kind=kind,languages={},enabled=true}
             local ok,err=self.config:addProfile(profile)
             if not ok then return self:notice(err) end
             local previous=self.config.data.source
@@ -1074,7 +1129,7 @@ function MaruManga:refreshRepository(repo,options)
         if not options.silent then self:notice(ok and _("Repository refreshed") or why) end
     end)
 end
-function MaruManga:showRepositories(page)
+function MaruManga:showRepositories(page,replace_page)
     if not self.repositories then return self:notice(self.repository_error) end
     page=math.max(1,tonumber(page) or 1)
     local items={{text=_("Add Repositories"),action=function()
@@ -1084,7 +1139,7 @@ function MaruManga:showRepositories(page)
             if not repo then return self:notice(err) end
             UIManager:close(dialog); self:refreshRepository(repo,{callback=function(ok)
                 if ok and not repo.title and repo.catalog then repo.title=repo.catalog.name; self.repositories:save() end
-                self:showRepositories()
+                self:showRepositories(1,true)
             end})
         end}}}}
         show(dialog); dialog:onShowKeyboard()
@@ -1093,7 +1148,7 @@ function MaruManga:showRepositories(page)
         local repos=self.repositories:list(); local index=1
         local function nextRepo()
             local repo=repos[index]; index=index+1
-            if not repo then return self:showRepositories() end
+            if not repo then return self:showRepositories(page,true) end
             self:refreshRepository(repo,{silent=true,callback=function(ok)
                 if ok and not repo.builtin and not repo.title and repo.catalog then repo.title=repo.catalog.name; self.repositories:save() end
                 nextRepo()
@@ -1121,18 +1176,18 @@ function MaruManga:showRepositories(page)
             items[#items+1]={text=title.."  ("..installedCount(repo).."/"..source_total.." ".._("Sources Installed")..")",action=function() self:showRepository(repo) end}
         end
     end
-    if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/previous-page.svg",action=function() self:showRepositories(page-1) end} end
-    if last<#all_repos then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg",action=function() self:showRepositories(page+1) end} end
-    self:menu(_("Repositories").." ("..#all_repos..")",clickable(items),nil,true)
+    if page>1 then items[#items+1]={text=previousPageLabel(page,page_count),icon=path.."images/menu/previous-page.svg",action=function() self:showRepositories(page-1,true) end} end
+    if last<#all_repos then items[#items+1]={text=nextPageLabel(page,page_count),icon=path.."images/menu/next-page.svg",action=function() self:showRepositories(page+1,true) end} end
+    self:menu(_("Repositories").." ("..#all_repos..")",clickable(items),nil,true,replace_page==true)
 end
-function MaruManga:searchRepositorySources(repo,query)
+function MaruManga:searchRepositorySources(repo,query,page)
     local dialog
     dialog=InputDialog:new{title=_("Search Sources"),input=query or "",buttons={{{text=_("Cancel"),callback=function() UIManager:close(dialog) end},{text=_("Search"),callback=function()
-        local value=dialog:getInputText(); UIManager:close(dialog); self:showRepositorySources(repo,value)
+        local value=dialog:getInputText(); UIManager:close(dialog); self:showRepositorySources(repo,value,1,true)
     end}}}}
     show(dialog); dialog:onShowKeyboard()
 end
-function MaruManga:showRepository(repo)
+function MaruManga:showRepository(repo,replace_page)
     local catalog=repo.catalog
     local title=repo.title or (catalog and catalog.name) or repo.url
     local author=catalog and catalog.author
@@ -1156,18 +1211,18 @@ function MaruManga:showRepository(repo)
         {text=_("Edit title and URL"),icon=path.."images/menu/settings.svg",action=function() self:editRepository(repo) end},
         {text=_("Reset title from verified metadata"),icon=path.."images/menu/refresh.svg",action=function()
             self:refreshRepository(repo,{callback=function(ok)
-                if ok then repo.title=nil; self.repositories:save(); self:showRepository(repo) end
+                if ok then repo.title=nil; self.repositories:save(); self:showRepository(repo,true) end
             end})
         end},
-        {text=_("Refresh Repository"),icon=path.."images/menu/refresh.svg",action=function() self:refreshRepository(repo,{callback=function(ok) if ok then self:showRepository(repo) end end}) end},
+        {text=_("Refresh Repository"),icon=path.."images/menu/refresh.svg",action=function() self:refreshRepository(repo,{callback=function(ok) if ok then self:showRepository(repo,true) end end}) end},
         {text=_("Sources: ")..#sources.."  ·  "..installed_count.."/"..#sources.." ".._("Installed"),icon=path.."images/menu/source.svg",group_end=true,action=function() self:showRepositorySources(repo) end},
     }
     items[#items+1]={text=_("Delete Repository"),icon=path.."images/menu/close.svg",action=function()
         show(ConfirmBox:new{text=_("Delete this repository? Installed sources and downloads remain."),ok_text=_("Delete"),ok_callback=function()
-            local ok,err=self.repositories:remove(repo); self:notice(ok and _("Repository deleted") or err); self:showRepositories()
+            local ok,err=self.repositories:remove(repo); self:notice(ok and _("Repository deleted") or err); self:backPage(); self:showRepositories(1,true)
         end})
     end}
-    self:menu(title,clickable(items),nil,true,nil,{page_limit=#items})
+    self:menu(title,clickable(items),nil,true,replace_page==true,{page_limit=#items})
 end
 function MaruManga:showRepositorySources(repo,source_query,page,replace_page)
     local catalog=repo.catalog
@@ -1179,10 +1234,10 @@ function MaruManga:showRepositorySources(repo,source_query,page,replace_page)
     for _,entry in ipairs(sources) do
         if needle=="" or entry.name:lower():find(needle,1,true) or entry.id:lower():find(needle,1,true) then filtered[#filtered+1]=entry end
     end
-    local items={{text=_("Search Sources")..(needle~="" and ("  ·  ".._("Matches: ")..#filtered) or ""),icon=path.."images/menu/search.svg",action=function() self:searchRepositorySources(repo,source_query) end}}
-    if needle~="" then items[#items+1]={text=_("Clear source search"),icon=path.."images/menu/close.svg",action=function() self:showRepositorySources(repo) end} end
-    items[#items+1]={text=_("Mass Install"),icon=path.."images/menu/downloads.svg",action=function() self:massSourceAction(repo,true) end}
-    items[#items+1]={text=_("Mass Uninstall"),icon=path.."images/menu/library.svg",group_end=true,action=function() self:massSourceAction(repo,false) end}
+    local items={{text=_("Search Sources")..(needle~="" and ("  ·  ".._("Matches: ")..#filtered) or ""),icon=path.."images/menu/search.svg",action=function() self:searchRepositorySources(repo,source_query,page) end}}
+    if needle~="" then items[#items+1]={text=_("Clear source search"),icon=path.."images/menu/close.svg",action=function() self:showRepositorySources(repo,nil,1,true) end} end
+    items[#items+1]={text=_("Mass Install"),icon=path.."images/menu/downloads.svg",action=function() self:massSourceAction(repo,true,source_query,page) end}
+    items[#items+1]={text=_("Mass Uninstall"),icon=path.."images/menu/library.svg",group_end=true,action=function() self:massSourceAction(repo,false,source_query,page) end}
     local page_size=12
     local page_count=math.max(1,math.ceil(#filtered/page_size))
     page=math.min(page,page_count)
@@ -1199,13 +1254,13 @@ function MaruManga:showRepositorySources(repo,source_query,page,replace_page)
         if entry.nsfw then tags=tags.." [NSFW]" end
         if entry.languages and #entry.languages>0 then tags=tags.." "..languageLabel(entry.languages) end
         local installed=profile~=nil
-        local row={text=entry.name..tags.."  ·  "..state,icon=path.."images/menu/"..(installed and "check-on" or "check-off")..".svg",action=function() self:catalogSourceDialog(repo,entry) end}
+        local row={text=entry.name..tags.."  ·  "..state,icon=path.."images/menu/"..(installed and "check-on" or "check-off")..".svg",action=function() self:catalogSourceDialog(repo,entry,source_query,page) end}
         items[#items+1]=row
     end
     if #sources==0 then items[#items+1]={text=_("No sources in this repository")} elseif #filtered==0 then items[#items+1]={text=_("No matching sources")} end
-    if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/previous-page.svg",action=function() self:showRepositorySources(repo,source_query,page-1) end} end
-    if last<#filtered then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg",action=function() self:showRepositorySources(repo,source_query,page+1) end} end
-    local page_title=title.." · Sources · "..page.."/"..page_count
+    if page>1 then items[#items+1]={text=previousPageLabel(page,page_count),icon=path.."images/menu/previous-page.svg",action=function() self:showRepositorySources(repo,source_query,page-1,true) end} end
+    if last<#filtered then items[#items+1]={text=nextPageLabel(page,page_count),icon=path.."images/menu/next-page.svg",action=function() self:showRepositorySources(repo,source_query,page+1,true) end} end
+    local page_title=title.." · Sources"
     self:menu(page_title,clickable(items),nil,true,replace_page)
 end
 function MaruManga:editRepository(repo)
@@ -1220,18 +1275,22 @@ function MaruManga:editRepository(repo)
             local old=repo.url; local ok,err=self.repositories:edit(repo,repo.title or (catalog and catalog.name) or "Repository",url)
             if not ok then return self:notice(err) end
             self:refreshRepository(repo,{callback=function(success)
-                if success then repo.title=nil; self.repositories:save(); UIManager:close(dialog); self:showRepository(repo) else self:notice(_("Could not verify repository URL")) end
+                if success then repo.title=nil; self.repositories:save(); UIManager:close(dialog); self:showRepository(repo,true) else self:notice(_("Could not verify repository URL")) end
             end})
-        else self:refreshRepository(repo,{callback=function(success) if success then repo.title=nil; self.repositories:save(); UIManager:close(dialog); self:showRepository(repo) end end}) end
+        else self:refreshRepository(repo,{callback=function(success) if success then repo.title=nil; self.repositories:save(); UIManager:close(dialog); self:showRepository(repo,true) end end}) end
     end},{text=_("Save"),callback=function()
         local fields=dialog:getFields(); local new_title,new_url=fields[1],fields[2]
         if new_title==(repo.title or (catalog and catalog.name) or "") and new_url==repo.url then return self:notice(_("No changes to save")) end
         local ok,err=self.repositories:edit(repo,new_title,new_url); if not ok then return self:notice(err) end
-        UIManager:close(dialog); self:refreshRepository(repo,{callback=function(success) if success then self:showRepository(repo) end end})
+        UIManager:close(dialog); self:refreshRepository(repo,{callback=function(success) if success then self:showRepository(repo,true) end end})
     end}}}}
     show(dialog)
 end
-function MaruManga:catalogSourceDialog(repo,entry)
+function MaruManga:catalogSourceDialog(repo,entry,source_query,page)
+    local function returnToSourceList()
+        self:backPage()
+        self:showRepositorySources(repo,source_query,page or 1,true)
+    end
     if entry.id=="mangadex" or entry.adapter=="mangadex" then return self:notice(_("MangaDex is no longer available")) end
     local installed=entry.id=="mangadex" and self.config.data.mangadex_installed or self:profile(entry.id)
     local conflict=type(installed)=="table" and installed.repository_url~=(repo.url or "builtin")
@@ -1240,42 +1299,46 @@ function MaruManga:catalogSourceDialog(repo,entry)
     if entry.nsfw then items[#items+1]={text=_("Content: NSFW")} end
     if compatibility then items[#items+1]={text=_("Unsupported: ")..compatibility}
     elseif conflict then items[#items+1]={text=_("Source ID belongs to another repository")}
-    elseif not installed then items[#items+1]={text=_("Install"),action=function() if self:installCatalogSource(repo,entry) then self:showRepositorySources(repo) end end}
+    elseif not installed then items[#items+1]={text=_("Install"),action=function() if self:installCatalogSource(repo,entry) then returnToSourceList() end end}
     else
         if type(installed)=="table" and Repositories.versionLess(installed.repository_version or 0,entry.version) then
-            items[#items+1]={text=_("Update"),action=function() if self:installCatalogSource(repo,entry) then self:showRepositorySources(repo) end end}
+            items[#items+1]={text=_("Update"),action=function() if self:installCatalogSource(repo,entry) then returnToSourceList() end end}
         end
         items[#items+1]={text=(type(installed)=="table" and installed.enabled==false or entry.id=="mangadex" and not self.config.data.mangadex_enabled) and _("Enable") or _("Disable"),action=function()
             if entry.id=="mangadex" then self.config.data.mangadex_enabled=not self.config.data.mangadex_enabled
             else installed.enabled=not (installed.enabled~=false) end
             local ok,err=self.config:save(); if not ok then return self:notice(err) end
-            self.manga_sources=nil; self:showRepositorySources(repo)
+            self.manga_sources=nil; returnToSourceList()
         end}
         items[#items+1]={text=_("Uninstall"),action=function() show(ConfirmBox:new{text=_("Uninstall this source? Library and downloads remain."),ok_text=_("Uninstall"),ok_callback=function()
             if entry.id=="mangadex" then self.config.data.mangadex_installed=false
             else for i,profile in ipairs(self.config.data.profiles) do if profile==installed then table.remove(self.config.data.profiles,i); break end end end
             local ok,err=self.config:save(); if not ok then return self:notice(err) end
-            self.manga_sources=nil; self:showRepositorySources(repo)
+            self.manga_sources=nil; returnToSourceList()
         end}) end}
     end
     self:menu(entry.name,clickable(items))
 end
-function MaruManga:massSourceAction(repo,install)
+function MaruManga:massSourceAction(repo,install,source_query,page)
     local entries={}; for _,entry in ipairs(repositorySources(repo)) do
         local active=self:profile(entry.id)
         if not sourceCompatibilityIssue(entry) and (install or active) then entries[#entries+1]=entry end
     end
     local selected={}; for _,entry in ipairs(entries) do selected[entry.id]=install end
-    local function render()
-        local items={}
-        for _,entry in ipairs(entries) do local item=entry; items[#items+1]={text=item.name,icon=path.."images/menu/"..(selected[item.id] and "check-on" or "check-off")..".svg",action=function() selected[item.id]=not selected[item.id]; render() end} end
-    items[#items+1]={text=install and _("Install selected") or _("Uninstall selected"),action=function()
-            if not install then return show(ConfirmBox:new{text=_("Uninstall selected sources? Library and downloads remain."),ok_text=_("Uninstall"),ok_callback=function() self:applyMassSources(repo,entries,selected,false); self:showRepositorySources(repo) end}) end
-            self:applyMassSources(repo,entries,selected,true); self:showRepositorySources(repo)
-        end}
-        self:menu(install and _("Mass Install") or _("Mass Uninstall"),clickable(items))
+    local function returnToSourceList()
+        self:backPage()
+        self:showRepositorySources(repo,source_query,page or 1,true)
     end
-    render()
+    local function render(replace_current)
+        local items={}
+        for _,entry in ipairs(entries) do local item=entry; items[#items+1]={text=item.name,icon=path.."images/menu/"..(selected[item.id] and "check-on" or "check-off")..".svg",action=function() selected[item.id]=not selected[item.id]; render(true) end} end
+    items[#items+1]={text=install and _("Install selected") or _("Uninstall selected"),action=function()
+            if not install then return show(ConfirmBox:new{text=_("Uninstall selected sources? Library and downloads remain."),ok_text=_("Uninstall"),ok_callback=function() self:applyMassSources(repo,entries,selected,false); returnToSourceList() end}) end
+            self:applyMassSources(repo,entries,selected,true); returnToSourceList()
+        end}
+        self:menu(install and _("Mass Install") or _("Mass Uninstall"),clickable(items),nil,false,replace_current==true)
+    end
+    render(false)
 end
 function MaruManga:applyMassSources(repo,entries,selected,install)
     local changed=0
@@ -1506,7 +1569,7 @@ function MaruManga:showSources()
     end}
     self:menu(_("Sources"),choices)
 end
-function MaruManga:showLibrary(query,sort,filter)
+function MaruManga:showLibrary(query,sort,filter,replace_page)
     if not self.library then return self:notice(self.library_error) end
     local items={}
     local downloaded={}
@@ -1555,17 +1618,21 @@ function MaruManga:showLibrary(query,sort,filter)
                     self:notice(entry.title .. "\n\n" .. (entry.description or _("No description")) .. "\n\n" .. _("Author: ") .. (entry.author or _("Unknown")) .. "\n" .. _("Status: ") .. (entry.status or _("Unknown")))
                 end},
                 {text=_("Read Manga"),icon=path.."images/menu/book.svg",action=function() self:openMangaArchive(entry) end},
+                {text=_("Verify Download"),maru_icon="verify",action=function() self:checkDownloadIntegrity(entry) end},
                 {text=_("Offline chapters"), action=function() self:offlineChapters(entry) end},
-                {text=_("Live Detail"), action=function() self:showManga(entry) end},
+                {text=_("Live Detail"), action=function() self:showManga(entry,false,{library=true,query=query,sort=sort,filter=filter}) end},
                 {text=_("Remove from library"), action=function()
                     local ok,err=self.library:remove(entry.source_id,entry.id)
-                    self:notice(ok and _("Removed from library") or err)
+                    if not ok then return self:notice(err) end
+                    self:notice(_("Removed from library"))
+                    if self.panel_enabled and self.main_menu then self.main_menu:goBack() end
+                    self:showLibrary(query,sort,filter,self.panel_enabled)
                 end},
             })
         end}
     end
     if #items == 0 then items[1]={text=_("No matching titles"),maru_no_icon=true} end
-    self:menu(_("Library"),clickable(items),nil,false,nil,{grid=not items[1].maru_no_icon,page_limit=4,page_title=not items[1].maru_no_icon and _("Library") or nil,on_page=function(first,last)
+    self:menu(_("Library"),clickable(items),nil,false,replace_page==true,{grid=not items[1].maru_no_icon,page_limit=4,page_title=not items[1].maru_no_icon and _("Library") or nil,on_page=function(first,last)
         self:prefetchVisibleCovers(items,first,last,self.main_menu and self.main_menu.current_page)
     end})
 end
@@ -1581,6 +1648,56 @@ function MaruManga:openLibrary()
         end},
         {text=_("Check Updates"),group_end=true,action=function() self:showUpdates() end},
     }))
+end
+function MaruManga:checkDownloadIntegrity(selected_manga)
+    if not self.library then return self:notice(self.library_error) end
+    local scans={}; local seen={}
+    for archive_path,metadata in pairs(self.library.data.archives or {}) do
+        local manga=type(metadata)=="table" and metadata.manga
+        local key=type(manga)=="table" and (tostring(manga.source_id)..":"..tostring(manga.id))
+        if key and (not selected_manga or manga.source_id==selected_manga.source_id and manga.id==selected_manga.id)
+            and type(manga.source_id)=="string" and manga.source_id:match("^[%w_-]+$")
+            and type(manga.id)=="string" and manga.id:match("^[%w_-]+$") then
+            for _,chapter in ipairs(self.library:chaptersInArchive(archive_path)) do
+                local id=key..":"..tostring(chapter.id)
+                if not seen[id] and self.library:archiveFor(manga.source_id,manga.id,chapter.id)==archive_path then
+                    seen[id]=true
+                    scans[#scans+1]={path=archive_path,sha256=metadata.sha256,source_id=manga.source_id,chapter_id=chapter.id,
+                        manga=selected_manga or manga,chapter=chapter}
+                end
+            end
+        end
+    end
+    if #scans==0 then return self:notice(_("No indexed downloads for this manga")) end
+    local loading=loadingMessage(_("Checking downloaded files…")); show(loading)
+    self:runner().run(function()
+        local lfs=require("libs/libkoreader-lfs")
+        return ArchiveScan.run(scans,function(file) return FileDigest.hash(file,require("ffi/sha2").sha256) end,
+            function(file) return lfs.attributes(file,"mode")=="file" end)
+    end,3600,function(ok,result,why,runner_error)
+        UIManager:close(loading)
+        if not ok or type(result)~="table" then return self:notice(runner_error or why or _("Could not verify local downloads")) end
+        local counts={valid=0,modified=0,missing=0,incomplete=0,unverified=0,error=0}
+        local rows={}
+        for _,entry in ipairs(scans) do
+            local state=result[entry.source_id..":"..entry.chapter_id] or "error"
+            counts[state]=(counts[state] or 0)+1
+            if state~="valid" then
+                local status=state=="modified" and _("Damaged") or state=="missing" and _("Missing")
+                    or state=="incomplete" and _("Incomplete") or state=="unverified" and _("No saved hash") or _("Could not check")
+                local current=entry
+                rows[#rows+1]={text=(current.manga.title or current.manga.id).." · "..(current.chapter.name or current.chapter.id).." · "..status,
+                    maru_icon=state=="modified" and "verify" or state=="missing" and "delete" or "details",
+                    action=function()
+                        if state=="modified" or state=="unverified" then self:verifyDownload(current.manga,current.chapter)
+                        else self:notice(status.."\n"..(current.chapter.name or current.chapter.id)) end
+                    end}
+            end
+        end
+        if #rows==0 then rows[1]={text=_("All downloaded chapter files passed integrity checks")} end
+        table.insert(rows,1,{text=_("Checked: ")..#scans.."   ·   ".._("Healthy: ")..counts.valid})
+        self:menu(selected_manga and ((selected_manga.title or selected_manga.id).." · ".._("Download Integrity")) or _("Download Integrity"),rows)
+    end)
 end
 function MaruManga:offlineChapters(manga)
     local items={}
@@ -1715,9 +1832,9 @@ function MaruManga:showDownloads(page)
         }
     end
     if total==0 then items[1]={text=_("No downloads")} end
-    if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/previous-page.svg",action=function() self:showDownloads(page-1) end} end
-    if page<page_count then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg",action=function() self:showDownloads(page+1) end} end
-    self.download_menu=self:menu(_("Downloads").." · "..page.."/"..page_count,items,nil,false,true,{
+    if page>1 then items[#items+1]={text=previousPageLabel(page,page_count),icon=path.."images/menu/previous-page.svg",action=function() self:showDownloads(page-1) end} end
+    if page<page_count then items[#items+1]={text=nextPageLabel(page,page_count),icon=path.."images/menu/next-page.svg",action=function() self:showDownloads(page+1) end} end
+    self.download_menu=self:menu(_("Downloads"),items,nil,false,true,{
         header_action={icon=path.."images/menu/refresh.svg",callback=function() self:showDownloads(page) end},
     })
 end
@@ -1729,6 +1846,7 @@ function MaruManga:showMangaDownloadActions(group,page)
             show(ConfirmBox:new{text=_("Pause all pending chapter downloads for this manga? Completed chapters and the manga CBZ will be kept."),ok_text=_("Pause All"),ok_callback=function()
                 local count=self.downloads:pauseManga(group.source_id,group.manga_id)
                 self:notice(_("Paused chapters: ")..count)
+                self:backPage()
                 self:showMangaDownloads(group.source_id,group.manga_id,1,true)
             end})
         end}
@@ -1737,6 +1855,7 @@ function MaruManga:showMangaDownloadActions(group,page)
         items[#items+1]={text=_("Continue All"),icon=path.."images/menu/next-page.svg",action=function()
             local count=self.downloads:resumeManga(group.source_id,group.manga_id)
             self:notice(_("Continued chapters: ")..count)
+            self:backPage()
             self:showMangaDownloads(group.source_id,group.manga_id,1,true)
         end}
     end
@@ -1745,6 +1864,7 @@ function MaruManga:showMangaDownloadActions(group,page)
             show(ConfirmBox:new{text=_("Cancel all pending chapter downloads for this manga? Completed chapters and the manga CBZ will be kept."),ok_text=_("Cancel All"),ok_callback=function()
                 local count=self.downloads:cancelManga(group.source_id,group.manga_id)
                 self:notice(_("Cancelled chapters: ")..count)
+                self:backPage()
                 self:showMangaDownloads(group.source_id,group.manga_id,1,true)
             end})
         end}
@@ -1784,6 +1904,7 @@ function MaruManga:deleteMangaDownloads(group)
         end
     end
     self:notice(_("All downloads for this manga were deleted"))
+    self:backPage()
     self:showDownloads()
 end
 function MaruManga:confirmDeleteDownloadedChapter(item,source_id,manga_id,page)
@@ -1822,6 +1943,7 @@ function MaruManga:confirmDeleteDownloadedChapter(item,source_id,manga_id,page)
                 if not saved then return self:notice(save_err or _("Could not update library metadata")) end
                 if not item.archived_only then self.downloads:remove(item) end
                 self:notice(_("Downloaded chapter deleted"))
+                self:backPage()
                 return self:showMangaDownloads(source_id,manga_id,page,true)
             end
             local remaining_pages=0
@@ -1861,6 +1983,7 @@ function MaruManga:confirmDeleteDownloadedChapter(item,source_id,manga_id,page)
                         end
                     end
                     self:notice(_("Downloaded chapter deleted"))
+                    self:backPage()
                     self:showMangaDownloads(source_id,manga_id,page,true)
                 end)
             end)
@@ -1920,13 +2043,14 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
                 {text=_("Remove from list"),icon=path.."images/menu/delete.svg",action=function()
                     local ok,err=self.downloads:remove(current)
                     self:notice(ok and _("Removed") or err)
+                    self:backPage()
                     self:showMangaDownloads(source_id,manga_id,page,true)
                 end},
             })
         end,action=function()
             local choices={}
             if current.status=="failed" or current.status=="cancelled" then
-                choices[#choices+1]={text=_("Retry"),icon=path.."images/menu/refresh.svg",action=function() local ok,err=self.downloads:retry(current); self:notice(ok and _("Queued") or err); self:showMangaDownloads(source_id,manga_id,page,true) end}
+                choices[#choices+1]={text=_("Retry"),icon=path.."images/menu/refresh.svg",action=function() local ok,err=self.downloads:retry(current); self:notice(ok and _("Queued") or err); self:backPage(); self:showMangaDownloads(source_id,manga_id,page,true) end}
                 choices[#choices+1]={text=_("Clear incomplete files"),icon=path.."images/menu/delete.svg",action=function()
                     show(ConfirmBox:new{text=_("Remove incomplete files for this chapter?"),ok_text=_("Remove"),ok_callback=function()
                         local active=self.downloads.active
@@ -1939,18 +2063,19 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
                 choices[#choices+1]={text=_("Continue"),icon=path.."images/menu/next-page.svg",action=function()
                     local ok,err=self.downloads:resume(current)
                     self:notice(ok and _("Download resumed") or err)
+                    self:backPage()
                     self:showMangaDownloads(source_id,manga_id,page,true)
                 end}
-                choices[#choices+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() local ok,err=self.downloads:cancel(current); self:notice(ok and _("Cancellation requested") or err); self:showMangaDownloads(source_id,manga_id,page,true) end}
+                choices[#choices+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() local ok,err=self.downloads:cancel(current); self:notice(ok and _("Cancellation requested") or err); self:backPage(); self:showMangaDownloads(source_id,manga_id,page,true) end}
             elseif current.status=="queued" or current.status=="running" then
-                choices[#choices+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() local ok,err=self.downloads:cancel(current); self:notice(ok and _("Cancellation requested") or err); self:showMangaDownloads(source_id,manga_id,page,true) end}
+                choices[#choices+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() local ok,err=self.downloads:cancel(current); self:notice(ok and _("Cancellation requested") or err); self:backPage(); self:showMangaDownloads(source_id,manga_id,page,true) end}
             elseif current.status=="completed" then
                 choices[#choices+1]={text=_("Read Manga"),icon=path.."images/menu/book.svg",action=function() self:openDownloaded(current.manga,current.chapter) end}
                 choices[#choices+1]={text=_("Verify downloaded file"),icon=path.."images/menu/verify.svg",action=function() self:verifyDownload(current.manga,current.chapter) end}
                 choices[#choices+1]={text=_("Delete this chapter"),icon=path.."images/menu/delete.svg",action=function() self:confirmDeleteDownloadedChapter(current,source_id,manga_id,page) end}
             end
             if not current.archived_only and current.status~="running" and current.status~="queued" then
-                choices[#choices+1]={text=_("Remove from list"),icon=path.."images/menu/delete.svg",action=function() local ok,err=self.downloads:remove(current); self:notice(ok and _("Removed") or err); self:showMangaDownloads(source_id,manga_id,page,true) end}
+                choices[#choices+1]={text=_("Remove from list"),icon=path.."images/menu/delete.svg",action=function() local ok,err=self.downloads:remove(current); self:notice(ok and _("Removed") or err); self:backPage(); self:showMangaDownloads(source_id,manga_id,page,true) end}
             end
             if current.error then choices[#choices+1]={text=current.error} end
             if #choices>0 then self:menu(current.chapter.name or current.chapter.id,choices) end
@@ -1970,9 +2095,9 @@ function MaruManga:showMangaDownloads(source_id,manga_id,page,replace_page)
         items[#items+1]=row
     end
     if total==0 then items[1]={text=_("No queued chapters")} end
-    if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/previous-page.svg",action=function() self:showMangaDownloads(source_id,manga_id,page-1,true) end} end
-    if page<page_count then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg",action=function() self:showMangaDownloads(source_id,manga_id,page+1,true) end} end
-    self:menu((manga.title or manga_id).." · "..page.."/"..page_count,items,nil,false,replace_page==true,{
+    if page>1 then items[#items+1]={text=previousPageLabel(page,page_count),icon=path.."images/menu/previous-page.svg",action=function() self:showMangaDownloads(source_id,manga_id,page-1,true) end} end
+    if page<page_count then items[#items+1]={text=nextPageLabel(page,page_count),icon=path.."images/menu/next-page.svg",action=function() self:showMangaDownloads(source_id,manga_id,page+1,true) end} end
+    self:menu(manga.title or manga_id,items,nil,false,replace_page==true,{
         header_action={icon=path.."images/menu/refresh.svg",callback=function() self:showMangaDownloads(source_id,manga_id,page,true) end},
     })
 end
@@ -2108,20 +2233,6 @@ function MaruManga:showUpdates()
         end)
     end)
 end
-function MaruManga:settings()
-    if not self.config then return self:notice(self.config_error) end
-    local dialog
-    dialog = InputDialog:new{title=_("Chapter language code"), input=self.config.data.language, buttons={{{text=_("Cancel"), callback=function() UIManager:close(dialog) end}, {text=_("Save"), callback=function()
-        local previous = self.config.data.language
-        local ok, err = self.config:setLanguage(dialog:getInputText())
-        if not ok then return self:notice(err) end
-        ok, err = self.config:save()
-        if not ok then self.config.data.language = previous; return self:notice(err) end
-        self.manga_sources = nil
-        UIManager:close(dialog)
-    end}}}}
-    show(dialog); dialog:onShowKeyboard()
-end
 local function saveNetworkConfig(plugin,values)
     local config=plugin.config.data
     local old={config.timeout,config.retries,config.user_agent,config.download_dir,config.download_concurrency,config.ignore_ssl_certificates}
@@ -2208,6 +2319,122 @@ function MaruManga:storageSettings(replace_page)
     end
     self:menu(_("Storage"),items,nil,nil,replace_page)
 end
+function MaruManga:migrationSettings(replace_page)
+    self:menu(_("Migrate"),clickable({
+        {text=_("Export all data"),maru_icon="export",action=function() self:chooseMigrationExportFolder() end},
+        {text=_("Import all data"),maru_icon="import",action=function() self:chooseMigrationImportFile() end},
+    }),nil,nil,replace_page)
+end
+function MaruManga:hasActiveDownloads()
+    for item in pairs(self.downloads and self.downloads.active_items or {}) do
+        if item.status=="running" then return true end
+    end
+    for _,item in ipairs(self.downloads and self.downloads.state and self.downloads.state.items or {}) do
+        if item.status=="running" then return true end
+    end
+    return false
+end
+function MaruManga:chooseMigrationExportFolder()
+    if not self.settings_store or not self.library then return self:notice(self.library_error or _("MaruManga data is unavailable")) end
+    local chooser=require("ui/widget/pathchooser"):new{
+        path=self:downloadRoot(),select_directory=true,select_file=false,show_files=false,title=_("Choose export folder"),
+        onConfirm=function(folder)
+            show(ConfirmBox:new{text=_("Export all MaruManga settings, repositories, library/history, download queue, and indexed manga CBZ files to:\n\n")..folder,
+                ok_text=_("Export"),cancel_text=_("Cancel"),ok_callback=function() self:exportMigration(folder) end})
+        end,
+    }
+    show(chooser)
+end
+function MaruManga:exportMigration(folder)
+    if self:hasActiveDownloads() then return self:notice(_("Wait for active downloads to finish before exporting.")) end
+    local lfs=require("libs/libkoreader-lfs")
+    local root=self:downloadRoot()
+    local archive_paths,records={},{}
+    local index=0
+    for file,record in pairs(self.library.data.archives or {}) do
+        if type(file)=="string" and type(record)=="table" and (lfs.symlinkattributes or lfs.attributes)(file,"mode")=="file" then
+            index=index+1
+            local entry=string.format("files/%06d.cbz",index)
+            archive_paths[#archive_paths+1]={path=file,entry=entry}
+            records[#records+1]={path=file,entry=entry}
+        end
+    end
+    table.sort(archive_paths,function(a,b) return a.entry<b.entry end)
+    table.sort(records,function(a,b) return a.entry<b.entry end)
+    local manifest,err=Migration.create(self.settings_store.data,records)
+    if not manifest then return self:notice(err) end
+    local json_ok,manifest_json=pcall(require("json").encode,manifest)
+    if not json_ok or type(manifest_json)~="string" then return self:notice(_("Could not serialize MaruManga data")) end
+    local data_root=root.."/.marumanga"
+    if lfs.symlinkattributes(data_root,"mode")~="directory" and not lfs.mkdir(data_root) then return self:notice(_("Cannot create MaruManga data folder")) end
+    local stamp=os.date("%Y%m%d-%H%M%S")
+    local output=folder.."/marumanga-migration-"..stamp..".zip"
+    local n=1
+    while lfs.attributes(output) do n=n+1; output=folder.."/marumanga-migration-"..stamp.."-"..n..".zip" end
+    local manifest_file=data_root.."/migration-manifest.tmp"
+    local loading=loadingMessage(_("Exporting MaruManga data…")); show(loading)
+    self:runner().run(function()
+        local ok,why=MigrationArchive.export(require("ffi/archiver"),output,manifest_json,manifest_file,archive_paths,
+            self:filesystem(),dofile(path.."reader/archive_integrity.lua").verifyEntry)
+        return ok and {path=output} or nil,why
+    end,3600,function(ok,result,why,runner_error)
+        UIManager:close(loading)
+        if not ok or not result then return self:notice(runner_error or why or _("Export failed")) end
+        self:notice(_("Migration exported to:\n")..result.path)
+    end)
+end
+function MaruManga:chooseMigrationImportFile()
+    if not self.settings_store then return self:notice(self.config_error or _("MaruManga data is unavailable")) end
+    local chooser=require("ui/widget/pathchooser"):new{
+        path=self:downloadRoot(),select_directory=false,select_file=true,show_files=true,title=_("Choose migration file"),
+        onConfirm=function(file)
+            show(ConfirmBox:new{text=_("Import all MaruManga data from this file? Current settings, repositories, library/history, and download queue will be replaced. Downloaded manga files will be added to the selected storage folder.\n\n")..file,
+                ok_text=_("Import"),cancel_text=_("Cancel"),ok_callback=function() self:importMigration(file) end})
+        end,
+    }
+    show(chooser)
+end
+function MaruManga:importMigration(file)
+    if self:hasActiveDownloads() then return self:notice(_("Wait for active downloads to finish before importing.")) end
+    local root=self:downloadRoot()
+    local loading=loadingMessage(_("Importing MaruManga data…")); show(loading)
+    self:runner().run(function()
+        local fs=self:filesystem()
+        local restored,count,imported=MigrationArchive.import(require("ffi/archiver"),file,root,Migration,require("json"),
+            ArchiveCheck,dofile(path.."reader/archive_integrity.lua").verifyEntry,fs)
+        if not restored then return nil,count end
+        return {settings=restored,count=count,files=imported}
+    end,7200,function(ok,result,why,runner_error)
+        UIManager:close(loading)
+        if not ok or type(result)~="table" then return self:notice(runner_error or why or _("Import failed")) end
+        local store=self.settings_store
+        local old_data=store.data
+        store.data=result.settings
+        local config,config_error=Settings.open(store)
+        local library,library_error=Library.open(store)
+        local repositories,repository_error=Repositories.open(store)
+        local queue,queue_error
+        if config and library and repositories then
+            queue,queue_error=DownloadQueue.open(store,function(item,done) return self:startChapter(item.manga,item.chapter,done,item) end,
+                function() return self.config and self.config.data.download_concurrency or 2 end)
+        end
+        if not config or not library or not repositories or not queue then
+            store.data=old_data; pcall(store.flush,store)
+            for _,archive in ipairs(result.files or {}) do os.remove(archive) end
+            return self:notice(config_error or library_error or repository_error or queue_error or _("Imported data is invalid"))
+        end
+        local saved,save_error=pcall(store.flush,store)
+        if not saved or save_error==false then
+            store.data=old_data; pcall(store.flush,store)
+            for _,archive in ipairs(result.files or {}) do os.remove(archive) end
+            return self:notice(_("Could not save imported settings"))
+        end
+        self.config,self.library,self.repositories,self.downloads=config,library,repositories,queue
+        self.manga_sources=nil
+        queue:run()
+        self:notice(_("Imported all MaruManga data. Manga files restored: ")..tostring(result.count or 0))
+    end)
+end
 function MaruManga:chooseDownloadFolder()
     if not self.config then return self:notice(self.config_error) end
     local lfs=require("libs/libkoreader-lfs")
@@ -2268,11 +2495,11 @@ function MaruManga:dnsSettings()
 end
 function MaruManga:openSettings()
     self:menu(_("Settings"),{
-        {text=_("Chapter language"),action=function() self:settings() end},
         {text=_("Network"),group_end=true,action=function() self:networkSettings() end},
         {text=_("Download"),action=function() self:downloadSettings() end},
-        {text=_("Storage"),maru_icon="folder",group_end=true,action=function() self:storageSettings() end},
-        {text=_("Uninstall"),action=function() self:confirmUninstall() end},
+        {text=_("Storage"),maru_icon="folder",action=function() self:storageSettings() end},
+        {text=_("Migrate"),maru_icon="export",action=function() self:migrationSettings() end},
+        {text=_("Uninstall"),group_end=true,action=function() self:confirmUninstall() end},
     })
 end
 function MaruManga:confirmUninstall()
@@ -2470,11 +2697,11 @@ function MaruManga:manageDiscoverSources()
                 render(page,true)
             end}
         end
-        if page>1 then items[#items+1]={text=_("Previous page"),icon=path.."images/menu/previous-page.svg",action=function() render(page-1,true) end} end
-        if page<page_count then items[#items+1]={text=_("Next page"),icon=path.."images/menu/next-page.svg",action=function() render(page+1,true) end} end
+        if page>1 then items[#items+1]={text=previousPageLabel(page,page_count),icon=path.."images/menu/previous-page.svg",action=function() render(page-1,true) end} end
+        if page<page_count then items[#items+1]={text=nextPageLabel(page,page_count),icon=path.."images/menu/next-page.svg",action=function() render(page+1,true) end} end
         items[#items+1]={text=_("Save"),icon=path.."images/menu/save.svg",group_end=true,action=function() finish(true) end}
         items[#items+1]={text=_("Cancel"),icon=path.."images/menu/close.svg",action=function() finish(false) end}
-        self:menu(_("Manage Sources · ")..page.."/"..page_count,items,nil,false,replace_page,{page_limit=page_size+4})
+        self:menu(_("Manage Sources"),items,nil,false,replace_page,{page_limit=page_size+4})
     end
     render(1,false)
 end
@@ -2587,6 +2814,6 @@ local function placeAtTopOfToolsOrder(item_id)
 end
 function MaruManga:addToMainMenu(items)
     placeAtTopOfToolsOrder("marumanga")
-    items.marumanga={text=_("MaruManga Downloader"), icon=path.."images/maru-manga-reader.png", sorting_hint="tools", callback=function() self:open() end}
+    items.marumanga={text=_("MaruManga"), icon=path.."images/maru-manga-reader.png", sorting_hint="tools", callback=function() self:open() end}
 end
 return MaruManga

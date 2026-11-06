@@ -13,7 +13,7 @@ MaruManga Downloader saves manga chapters as one CBZ archive per manga, manages 
 1. Download the ZIP from [Latest release](https://github.com/MRHRTZ/MaruManga.koplugin/releases/latest).
 2. Extract the `MaruManga.koplugin` folder into KOReader's `plugins` directory. The final path should end in `plugins/MaruManga.koplugin/main.lua` (do not leave an extra nested folder).
 3. Restart KOReader.
-4. Open **Tools > MaruManga Downloader**.
+4. Open **Tools > MaruManga**.
 
 For Android, the plugin directory is normally under KOReader's application data. See [Development documentation](docs/README.md) for locating it and installing with ADB.
 
@@ -33,7 +33,7 @@ For Android, the plugin directory is normally under KOReader's application data.
 | Library | Downloads |
 | <img src="images/library.png" alt="MaruManga Downloader library" width="360"> | <img src="images/downloads.png" alt="MaruManga Downloader download queue" width="360"> |
 
-**Settings** is split into Chapter language, Network, Download, Storage, and Uninstall. Network contains timeout, retries, user-agent, DNS and the optional SSL certificate verification override. Download controls concurrent downloads (default 2). Storage shows the active folder (default `marumanga` under KOReader's data directory) and opens KOReader's folder picker; **Restore default folder** returns to that location. Manga CBZ files are written directly into the selected folder with a unique manga name, such as `Tower-of-God--webtoon-12345.cbz`. Covers, cache, source icons, and image staging files are kept under the hidden `.marumanga/` subfolder. Library and queue settings continue to use KOReader's LuaSettings persistence. Uninstall asks separately whether to keep or remove MaruManga's data.
+**Settings** contains Network, Download, Storage, Migrate, and Uninstall. Migrate exports/imports settings, repositories, library/history, download queue, and indexed manga CBZ files in one ZIP. Import restores manga CBZ files to the currently selected Storage folder and replaces the current MaruManga settings. Open a title in **Library > Browse library** and choose **Verify Download** to check that manga's indexed CBZs against saved SHA-256 metadata. Source profiles are checked when installing from a repository. Chapter lists are shown as provided by each source; source language tags identify a catalog's language without filtering its chapters. Network contains timeout, retries, user-agent, DNS and the optional SSL certificate verification override. Download controls concurrent downloads (default 2). Storage shows the active folder (default `marumanga` under KOReader's data directory) and opens KOReader's folder picker; **Restore default folder** returns to that location. Manga CBZ files are written directly into the selected folder with a unique manga name, such as `Tower-of-God--webtoon-12345.cbz`. Covers, cache, source icons, and image staging files are kept under the hidden `.marumanga/` subfolder. Library and queue settings continue to use KOReader's LuaSettings persistence. Uninstall asks separately whether to keep or remove MaruManga's data.
 
 ## Update checks
 

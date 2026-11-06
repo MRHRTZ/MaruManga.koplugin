@@ -3,9 +3,11 @@ local Parser=dofile("sources/komiku/parser.lua")
 local Interface=dofile("sources/source_interface.lua")
 local html=require("htmlparser"); local url=require("socket.url")
 local function plain_text(value) return (value:gsub("<[^>]*>","")) end
-local profile={id="komiku",name="Komiku",base_url="https://komiku.org",api_url="https://api.komiku.org",languages={"id"},title_selector="h1",description_selector="#Sinopsis > p",author_selector="table.inftable tr > td:contains(Author) + td",artist_selector="table.inftable tr > td:contains(Artist) + td",status_selector="table.inftable tr > td:contains(Status) + td",chapter_selector="#Daftar_Chapter tr",chapter_link_selector="a",page_selector="#Baca_Komik img",page_attributes={"src"}}
+local profile={id="komiku",name="Komiku",base_url="https://komiku.org",api_url="https://api.komiku.org",languages={"id"},title_selector="h1",description_selector="#Sinopsis > p",author_selector="table.inftable tr > td:contains(Author) + td",artist_selector="table.inftable tr > td:contains(Artist) + td",status_selector="table.inftable tr > td:contains(Status) + td"}
 local parser=Parser.new(html,url.absolute,plain_text,profile,function(value) return value end)
 assert(profile.list_selector=="div.bge" and profile.list_link_selector=="a" and profile.list_title_selector=="h3" and profile.list_cover_selector=="img")
+assert(profile.chapter_selector=="#Daftar_Chapter tr" and profile.chapter_link_selector=="a" and profile.chapter_attribute=="href")
+assert(profile.page_selector=="#Baca_Komik img" and profile.page_attribute=="src")
 local function response(body) return function(_,request_url,callback) callback(body) end end
 local list_html='<div class="bge"><a href="/manga/naruto/"><img src="https://thumbnail.komiku.org/naruto.jpg"><h3>Naruto</h3></a><div class="new1"><a><span>Awal:</span><span>Chapter 1</span></a></div><div class="new1"><a><span>Terbaru:</span><span>Chapter 23</span></a></div></div>'
 local transport={get=response(list_html)}

@@ -49,7 +49,7 @@ package.preload["ui/widget/buttondialog"]=function()
         return options
     end}
 end
-package.preload.device=function() return {screen={getWidth=function() return 600 end,scaleBySize=function(_,size) return size end}} end
+package.preload.device=function() return {screen={getWidth=function() return 600 end,getHeight=function() return 900 end,scaleBySize=function(_,size) return size end}} end
 package.preload["ui/widget/menu"]=function()
     local Menu={}
     function Menu:new(v)
@@ -72,15 +72,15 @@ package.preload.util=function() return {htmlToPlainText=function(s) return s end
 local plugin=dofile("./main.lua")
 local registered=false
 plugin.ui={menu={registerToMainMenu=function(_,p) registered=p==plugin end}}; plugin:init(); plugin.default_refresh_started=true
-local menu={}; plugin:addToMainMenu(menu); assert(registered and menu.marumanga and menu.marumanga.sorting_hint=="tools" and plugin.config.data.source=="komiku")
+local menu={}; plugin:addToMainMenu(menu); assert(registered and menu.marumanga and menu.marumanga.text=="MaruManga" and menu.marumanga.sorting_hint=="tools" and plugin.config.data.source=="komiku")
 plugin:openSettings()
 local settings_menu=widgets[#widgets]
 assert(settings_menu.title=="Settings" and #settings_menu.item_table==5)
-assert(settings_menu.item_table[1].text=="Chapter language")
-assert(settings_menu.item_table[2].text=="Network" and settings_menu.item_table[2].group_end)
-assert(settings_menu.item_table[3].text=="Download")
-assert(settings_menu.item_table[4].text=="Storage" and settings_menu.item_table[4].group_end)
-assert(settings_menu.item_table[5].text=="Uninstall")
+assert(settings_menu.item_table[1].text=="Network" and settings_menu.item_table[1].group_end)
+assert(settings_menu.item_table[2].text=="Download")
+assert(settings_menu.item_table[3].text=="Storage")
+assert(settings_menu.item_table[4].text=="Migrate")
+assert(settings_menu.item_table[5].text=="Uninstall" and settings_menu.item_table[5].group_end)
 local bundled_repo; for _,candidate in ipairs(plugin.repositories:list()) do if candidate.builtin then bundled_repo=candidate end end
 assert(bundled_repo and #plugin.config.data.auto_installed_source_ids>=4)
 assert(plugin:profile("komiku").repository_url==bundled_repo.url)
@@ -106,7 +106,7 @@ source.transport.get=function(_,url,cb)
 end
 plugin:openDiscover(); local discover=widgets[#widgets]; assert(discover.title=="Discover" and #discover.item_table==4)
 local manage_item=discover.item_table[4]; assert(manage_item.text=="Manage Sources" and manage_item.group_end); manage_item.action()
-local manage_menu=widgets[#widgets]; assert(manage_menu.title=="Manage Sources · 1/1" and #manage_menu.item_table==#plugin.config.data.profiles+2)
+local manage_menu=widgets[#widgets]; assert(manage_menu.title=="Manage Sources" and #manage_menu.item_table==#plugin.config.data.profiles+2)
 local example_item; for _,item in ipairs(manage_menu.item_table) do if item.text:find("Example",1,true) then example_item=item end end
 assert(example_item and example_item.state and example_item.action); example_item.action()
 manage_menu=widgets[#widgets]
@@ -162,7 +162,40 @@ assert(add and chapters and download_all); assert(detail.item_table[6]==download
 assert(detail.item_table[1].maru_key=="Author" and detail.item_table[1].maru_value=="Unknown")
 local has_cover_action=false; for _,item in ipairs(detail.item_table) do if type(item.text)=="string" and item.text:lower():find("view cover",1,true) then has_cover_action=true end end; assert(not has_cover_action)
 source.getChapterList=function(_,manga,page,callback) callback({items={{id="chapter-1",manga_id=manga.id,name="Chapter 1"}},has_next=false}) end
-chapters.action(); local list=widgets[#widgets]; assert(list.title:match("Series") and #list.item_table>=2 and list.page_limit==6 and list.fill_height)
+chapters.action(); local list=widgets[#widgets]; assert(list.title:match("Series") and #list.item_table>=2 and list.page_limit>6 and list.fill_height)
+assert(widgets[#widgets-1].text=="Loading chapters...")
+list.item_table[1].action(); list=widgets[#widgets]
+assert(list.title:match("Series") and widgets[#widgets-1].text=="Loading chapters...")
+source.getChapterList=function(_,manga,page,callback) callback({items={},has_next=false}) end
+plugin:chapters(results.items[1],1); local empty_chapters=widgets[#widgets]
+assert(empty_chapters.item_table[2].text=="No chapters found")
+local page_calls={}
+plugin.main_menu={visible=true,setPage=function(_,title,items,settings)
+    page_calls[#page_calls+1]={title=title,items=items,settings=settings}
+    return page_calls[#page_calls]
+end}
+plugin.panel_enabled=true
+source.getChapterList=function(_,manga,page,callback) callback({items={{id="chapter-1",manga_id=manga.id,name="Chapter 1"}},has_next=false}) end
+plugin:chapters(results.items[1],1,"desc")
+assert(page_calls[#page_calls].settings.push==true)
+page_calls[#page_calls].items[1].action()
+assert(page_calls[#page_calls].settings.push==false,"sorting must replace the chapter page, not add a back-stack entry")
+local saved_cache_cover,saved_details=plugin.cacheCover,source.getMangaDetails
+plugin.cacheCover=function(_,manga,callback) callback(nil) end
+source.getMangaDetails=function(_,manga,callback) callback({id=manga.id,source_id=manga.source_id,title=manga.title,description="",genres={}}) end
+local back_test_manga={id="back-stack-test",source_id="example",title="Back Stack Test"}
+plugin:showManga(back_test_manga)
+assert(page_calls[#page_calls].settings.push==true,"opening details from results should push a page")
+local add_to_library
+for _,item in ipairs(page_calls[#page_calls].items) do if item.text=="Add to library" then add_to_library=item end end
+assert(add_to_library); add_to_library.action()
+assert(page_calls[#page_calls].settings.push==false,"adding to library should replace the detail page")
+local has_remove_from_library=false
+for _,item in ipairs(page_calls[#page_calls].items) do if item.text=="Remove from library" then has_remove_from_library=true end end
+assert(has_remove_from_library)
+assert(plugin.library:remove("example","back-stack-test"))
+plugin.cacheCover,source.getMangaDetails=saved_cache_cover,saved_details
+plugin.main_menu=nil; plugin.panel_enabled=false
 plugin:loadList("Popular",function(_,cb) cb({items={results.items[1]},has_next=false}) end,function(m) return m.title end)
 local popular=widgets[#widgets]; assert(popular.title=="Popular" and popular.item_table[1].maru_manga.title=="Series" and popular.page_limit==4)
 results.items[1].latest_chapter="Chapter 23"
@@ -192,9 +225,10 @@ local update_fields=0
 for _,item in ipairs(about) do if item.text:find("Last Update: 2026%-%d%d%-%d%d %d%d:%d%d") then update_fields=update_fields+1 end; assert(not item.text:match("^Time:")) end
 assert(update_fields==1)
 plugin.panel_enabled=false; plugin:openSettings(); local settings_menu=widgets[#widgets]
-assert(settings_menu.title=="Settings" and settings_menu.item_table[1].text=="Chapter language")
-assert(settings_menu.item_table[2].text=="Network" and settings_menu.item_table[2].group_end)
-assert(settings_menu.item_table[3].text=="Download" and settings_menu.item_table[4].text=="Storage")
+assert(settings_menu.title=="Settings" and #settings_menu.item_table==5)
+assert(settings_menu.item_table[1].text=="Network" and settings_menu.item_table[1].group_end)
+assert(settings_menu.item_table[2].text=="Download" and settings_menu.item_table[3].text=="Storage")
+assert(settings_menu.item_table[4].text=="Migrate")
 assert(settings_menu.item_table[5].text=="Uninstall")
 settings_menu.item_table[5].action(); local first_uninstall=widgets[#widgets]
 assert(first_uninstall.ok_text=="Uninstall" and first_uninstall.cancel_text=="Cancel")
@@ -210,7 +244,7 @@ assert(plugin.repositories:update(repo,catalog))
 plugin:showRepositories(); local repos_menu=widgets[#widgets]; assert(repos_menu.item_table[5].text:find("Fixture",1,true)); assert(repos_menu.item_group[3]._underline_container.linesize==1); repos_menu.item_table[5].action()
 local repo_menu=widgets[#widgets]; assert(repo_menu.title=="Fixture")
 assert(repo_menu.item_table[9].text:find("Sources: 1",1,true)); repo_menu.item_table[9].action()
-local source_menu=widgets[#widgets]; assert(source_menu.title=="Fixture · Sources · 1/1")
+local source_menu=widgets[#widgets]; assert(source_menu.title=="Fixture · Sources")
 local has_tag=false; for _,item in ipairs(source_menu.item_table) do if item.text:find("NSFW",1,true) and item.text:find("EN%-ID") then has_tag=true end end; assert(has_tag)
 local catalog_source=source_menu.item_table[#source_menu.item_table]; assert(catalog_source.action and catalog_source.state)
 plugin:catalogSourceDialog(repo,{id="incomplete",name="Incomplete",version=1,adapter="generic",base_url="https://example.org",profile={search_path="/"}})
@@ -244,6 +278,10 @@ local sync_key=next(plugin.library.data.chapter_sync); assert(sync_key and plugi
 plugin:showLibrary(); assert(widgets[#widgets].item_table[1].maru_progress:find("Chapter 0/1 · Update Available",1,true))
 local library_item=widgets[#widgets].item_table[1]
 assert(library_item.maru_icon=="manga" and library_item.maru_badge=="badge-update" and library_item.maru_title and library_item.maru_progress=="Chapter 0/1 · Update Available")
+library_item.action()
+local manga_actions=widgets[#widgets]; local verify_action=false
+for _,action in ipairs(manga_actions.item_table or {}) do if action.text=="Verify Download" and action.action then verify_action=true end end
+assert(verify_action,"Library manga actions should expose per-title download verification")
 -- A missing historical chapter must not show an update badge when the latest
 -- available chapter is already downloaded.
 local library_key,library_manga=next(plugin.library.data.manga)

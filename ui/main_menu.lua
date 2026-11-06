@@ -233,7 +233,7 @@ function M.new(options)
             if page.on_close then pcall(page.on_close) end
             dialog:onClose()
         end}
-        local title_text=page.page_title and (page.page_title.." · "..page_index.."/"..page_count) or page.title or "MaruManga Downloader"
+        local title_text=page.page_title or page.title or "MaruManga Downloader"
         local left_reserved=page.backable and Screen:scaleBySize(56) or Screen:scaleBySize(12)
         local right_reserved=page.header_action and Screen:scaleBySize(108) or Screen:scaleBySize(56)
         local title_width=math.max(Screen:scaleBySize(120),inner_width-2*math.max(left_reserved,right_reserved))
@@ -326,7 +326,9 @@ function M.new(options)
             end
         end
         if page_index>1 then
-            rows[#rows+1]=MainRow:new{text=_("Previous page").." ("..page_index.."/"..page_count..")",icon=icon_dir.."previous-page.svg",width=inner_width,callback=function()
+            local label=_("Previous page")
+            if page_index==page_count then label=label.." ("..page_index.."/"..page_count..")" end
+            rows[#rows+1]=MainRow:new{text=label,icon=icon_dir.."previous-page.svg",width=inner_width,callback=function()
                 runActionSafely(_("Previous page"),function()
                     page.page_index=page_index-1; dialog:renderCurrentPage()
                 end)
