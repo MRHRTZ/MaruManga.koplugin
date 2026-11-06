@@ -188,8 +188,8 @@ local function loadingMessage(text)
     end
     return message
 end
-local PLUGIN_VERSION="0.3.2"
-local PLUGIN_LAST_UPDATE="2026-11-05"
+local PLUGIN_VERSION="0.3.3"
+local PLUGIN_LAST_UPDATE="2026-11-06"
 function MaruManga:init()
     self.ui.menu:registerToMainMenu(self)
     self.source_errors={}

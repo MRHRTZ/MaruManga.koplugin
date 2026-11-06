@@ -12,6 +12,7 @@ local RightContainer = require("ui/widget/container/rightcontainer")
 local TextWidget = require("ui/widget/textwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local ScrollTextWidget = require("ui/widget/scrolltextwidget")
+local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local UnderlineContainer = require("ui/widget/container/underlinecontainer")
@@ -354,7 +355,7 @@ function M.new(options)
             -- Keep manga details tall and centered while retaining a clear
             -- top and bottom margin around the dialog.
             local frame_chrome=2*(Size.padding.large+Size.margin.title)+Size.line.medium+2*Size.padding.button
-            local outer_margin=Screen:scaleBySize(56)
+            local outer_margin=Screen:scaleBySize(72)
             local available=Screen:getHeight()-2*outer_margin-frame_chrome
             local filler=math.floor(available-natural_height)
             if filler>0 then
@@ -363,13 +364,37 @@ function M.new(options)
                 rows[#rows+1]=spacer
             end
         end
+        -- ButtonDialog treats `_added_widgets` as its title group and only
+        -- scrolls its native ButtonTable. A long custom page can therefore
+        -- make max_height negative; on older KOReader builds that asks an
+        -- empty ButtonTable to create a grid from missing offsets (the Kobo
+        -- buttontable.lua:230 crash). Bound custom content before reinit and
+        -- give it its own native scroller instead.
+        local content_height=0
+        for _,row in ipairs(rows) do
+            local ok,size=pcall(row.getSize,row)
+            if ok and size and type(size.h)=="number" then content_height=content_height+size.h end
+        end
+        local viewport_height=math.max(Screen:scaleBySize(160),Screen:getHeight()-Screen:scaleBySize(184))
+        local body_scroller
+        if content_height>viewport_height then
+            local content=VerticalGroup:new(rows)
+            body_scroller=ScrollableContainer:new{
+                dimen=Geom:new{w=inner_width,h=viewport_height},
+                show_parent=dialog,
+                content,
+            }
+            rows={body_scroller}
+        end
         -- ButtonDialog's `reinit` rebuilds its inner MovableContainer. Replace
         -- the visible instance through UIManager so the old frame cannot remain
         -- painted underneath the new page. Reuse this same dialog object.
         local was_visible=dialog.visible
         if was_visible then UIManager:close(dialog); dialog.visible=false end
         dialog._added_widgets=rows
+        dialog.cropping_widget=nil
         dialog:reinit()
+        if body_scroller then dialog.cropping_widget=body_scroller end
         if dialog.movable and dialog.movable[1] then dialog.movable[1].radius=Screen:scaleBySize(12) end
         keepDialogCentered()
         if was_visible then UIManager:show(dialog); dialog.visible=true end
